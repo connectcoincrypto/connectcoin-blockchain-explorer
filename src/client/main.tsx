@@ -44,6 +44,7 @@ import type {
   TxOutput,
 } from '../shared/types';
 import { outputLabel } from '../shared/types';
+import { outputPath } from '../shared/links';
 import './style.css';
 
 function useApi<T>(url: string, interval = 0) {
@@ -809,7 +810,10 @@ function OutputCard({
 }) {
   const o = output;
   return (
-    <article className={`output-card ${o.type === 2 ? 'p2c-output' : ''}`} id={`output-${o.index}`}>
+    <article
+      className={`output-card ${o.type === 2 ? 'p2c-output' : ''}`}
+      id={txid ? `${txid}-output-${o.index}` : `output-${o.index}`}
+    >
       <div className="output-top">
         <span className="output-index">OUTPUT #{o.index}</span>
         <strong className="mono">{money(o.value)}</strong>
@@ -865,7 +869,7 @@ function OutputCard({
           </Badge>
         )}
         {txid && (
-          <Link className="muted mono" to={`/tx/${txid}`}>
+          <Link className="muted mono" to={outputPath(txid, o.index)}>
             {short(txid, 6)}
           </Link>
         )}
@@ -982,7 +986,7 @@ function TransactionDetail() {
                       <div className="input-source">
                         <HashValue
                           value={input.txid}
-                          to={`/tx/${input.txid}?outputsPage=${Math.floor((input.vout ?? 0) / 20) + 1}#output-${input.vout}`}
+                          to={input.txid ? outputPath(input.txid, input.vout ?? 0) : undefined}
                         />
                         <span className="muted">output #{input.vout}</span>
                       </div>
