@@ -42,6 +42,8 @@ Support for a network option does not imply that network is currently launched o
 
 ## Explorer views
 
+The header's theme selector offers **System**, **Light** and **Dark**. It follows the operating system by default, remembers an explicit choice in this browser and synchronizes that choice between open explorer tabs. The saved theme is applied before the first paint, without weakening the production script policy.
+
 - Network overview: node height, hashrate, mempool, latest blocks, index progress and confirmed-chain P2C reward totals.
 - Blocks and transactions, including confirmations, timestamps, sizes, weight, fees, inputs, outputs, previous outputs and spending transactions.
 - Search by block height, block/transaction hash, ConnectCoin address or canonical DNS domain.

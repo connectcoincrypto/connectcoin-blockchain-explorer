@@ -45,6 +45,7 @@ import type {
 } from '../shared/types';
 import { outputLabel } from '../shared/types';
 import { outputPath } from '../shared/links';
+import { ThemePicker } from './ThemePicker';
 import './style.css';
 
 function useApi<T>(url: string, interval = 0) {
@@ -314,14 +315,17 @@ function Layout() {
               <img src="/favicon.svg" alt="" />
               <span>{status?.title ?? 'ConnectCoin Explorer'}</span>
             </Link>
-            <div className="connection">
-              <span className={`status-dot ${status?.connected ? 'online' : ''}`} />
-              {status?.connected ? (status.syncing ? 'Indexing' : 'Node connected') : 'Node unavailable'}
-              {status && (
-                <Badge tone="network">
-                  {status.network === 'testnet4' ? 'TESTNET 4' : status.network.toUpperCase()}
-                </Badge>
-              )}
+            <div className="header-actions">
+              <div className="connection">
+                <span className={`status-dot ${status?.connected ? 'online' : ''}`} />
+                {status?.connected ? (status.syncing ? 'Indexing' : 'Node connected') : 'Node unavailable'}
+                {status && (
+                  <Badge tone="network">
+                    {status.network === 'testnet4' ? 'TESTNET 4' : status.network.toUpperCase()}
+                  </Badge>
+                )}
+              </div>
+              <ThemePicker />
             </div>
           </div>
           <div className="nav-row wrap">
