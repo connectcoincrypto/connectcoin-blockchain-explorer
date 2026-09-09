@@ -4,7 +4,7 @@ A self-hosted, read-only explorer backed by a ConnectCoin node's JSON-RPC. Nativ
 
 ## Run on testnet
 
-Requires **Node.js 24+**, npm, and a compatible ConnectCoin node with RPC enabled (`server=1`). For a complete explorer, the node must retain the full, unpruned chain. A wallet is **not** required.
+Requires **Node.js 24+**, npm, and a ConnectCoin node using the **September 9, 2026 P2C v2 chain reset**, with RPC enabled (`server=1`). Only proof version 2 is supported; v1 is rejected. For a complete explorer, the node must retain the full, unpruned chain. A wallet is **not** required.
 
 ```sh
 npm ci
@@ -28,7 +28,7 @@ npm start -- --testnet --rpc-url http://127.0.0.1:48178 --rpc-cookie "C:/path/to
 
 For username/password authentication, use `CONNECTCOIN_RPC_USER` and `CONNECTCOIN_RPC_PASSWORD` in the server environment or an untracked `.env`. Do not put credentials in the URL, source code, frontend, or command-line password arguments. `.env.example` documents the available variables. Cookie authentication is reread on each request, so node restarts can rotate the cookie.
 
-Run `npm start -- --help` for all options. The explorer defaults to `main` when no network flag or environment setting is supplied; explicitly use `--testnet` for the current test network. CLI flags override environment settings.
+Run `npm start -- --help` for all options. The explorer now defaults to **testnet4**, matching the Core beta, when no network flag or environment setting is supplied. Existing explicit selections are preserved; CLI flags override environment settings.
 
 | Selection                          | Node chain | Default RPC port | Header                       |
 | ---------------------------------- | ---------- | ---------------- | ---------------------------- |
@@ -38,19 +38,47 @@ Run `npm start -- --help` for all options. The explorer defaults to `main` when 
 | `--network signet`                 | `signet`   | 48181            | ConnectCoin Signet Explorer  |
 | `--regtest` / `--network regtest`  | `regtest`  | 48184            | ConnectCoin Regtest Explorer |
 
-Support for a network option does not imply that network is currently launched or reachable. The explorer refuses to synchronize against a different chain or to reuse a database with a different genesis.
+Mainnet is **not launched and has no operational genesis**. Its option only exposes its parameters and an unavailable-network warning; it cannot synchronize. The explorer checks both the node's chain name and the exact current genesis, even with an empty index. An old chain with the same name is rejected.
+
+## Updating after the P2C v2 reset
+
+Stop the previous explorer process gracefully, then, from this repository directory:
+
+```sh
+git pull --ff-only
+npm ci
+npm run build
+npm start -- --testnet --host 127.0.0.1 --port 3000
+```
+
+Keep your existing HTTPS reverse proxy pointing to `127.0.0.1:3000`. Restart an existing process supervisor instead of starting a second writer if the explorer is managed as a service. These commands update the explorer, **not the Core node**: the RPC node must also be running the matching reset chain. If it uses a new data directory, pass `--datadir /path/to/new/node-data` or update `CONNECTCOIN_DATADIR`/`CONNECTCOIN_RPC_COOKIE`.
+
+The default index is now `data/<network>-<first-16-genesis-hex>.sqlite`, so the new testnet4 uses `data/testnet4-38cae555fb78f44c.sqlite`. The old `data/testnet4.sqlite` is preserved and is **not imported**. If `--database` or `EXPLORER_DATABASE` selects an old index, startup refuses it: preserve that file and choose a new path, or remove the override to use the new default. Nothing deletes old indexes or wallets. Initial backfill starts at the new genesis; old test balances do not carry over.
+
+Current identities are defined together with network defaults in `src/shared/networks.ts`:
+
+| Network  | Current genesis                                                    |
+| -------- | ------------------------------------------------------------------ |
+| Testnet3 | `ca89051d3a1bcf96be2ed4943d347687af47b6fd0a155fc2b15ddcc103bd75af` |
+| Testnet4 | `38cae555fb78f44c31e7d6859d0476252b321dae8b6312afefe0a45fc3fd112a` |
+| Signet   | `2a62fd84425bc1f6dce0343ec3f6c08b782d76df54d52e5e3b8153f5d27d94b4` |
+| Regtest  | `de48ff31cbff58a91ef359100fef13e6472f165e6f0410e52efcdacb1861f65a` |
+| Mainnet  | None — not launched                                                |
+
+The catalog follows the current Core sources (`src/kernel/chainparams.cpp`, `src/chainparamsbase.cpp`, `src/consensus/{amount,consensus,p2c}.h`, `doc/testnet-beta.md`). Tests independently hash the four serialized genesis headers. Custom signet challenges share the default genesis but can change network magic; catalog fields are explicitly defaults, not a discovery of custom node settings.
 
 ## Explorer views
 
 The header's theme selector offers **System**, **Light** and **Dark**. It follows the operating system by default, remembers an explicit choice in this browser and synchronizes that choice between open explorer tabs. The saved theme is applied before the first paint, without weakening the production script policy.
 
 - Network overview: node height, hashrate, mempool, latest blocks, index progress and confirmed-chain P2C reward totals.
+- Network parameters: expected and RPC-observed genesis, genesis transaction, public key/allocation, header details, address prefix, proof/root versions, block/proof limits, maturity, halving interval and default ports.
 - Blocks and transactions, including confirmations, timestamps, sizes, weight, fees, inputs, outputs, previous outputs and spending transactions.
 - Search by block height, block/transaction hash, ConnectCoin address or canonical DNS domain.
 - Address history and balances; domain funding, rewards consumed by claims and available outputs.
 - Live node mempool, plus pending-spend information on transaction outputs.
 - P2C bounty catalogue with domain and spent/available filters.
-- TLS proof inspection for P2C spending inputs: handshake messages, challenge binding, work hash and target comparison, certificate display metadata and downloadable proof JSON.
+- TLS proof v2 inspection for P2C spending inputs: handshake messages and their work-hash inclusion, chosen CertificateVerify signature algorithm, challenge binding, work hash/tag/preimage length, TLS transcript digest, target comparison, certificate display metadata and downloadable proof JSON.
 
 Every output displays its numeric type:
 
@@ -65,13 +93,17 @@ Type 1 exposes its x-only public key and ConnectCoin address. Type 2 exposes its
 
 **Amounts:** 1 CC = 10^10 connects. RPC numeric literals are parsed without floating-point rounding. Amounts travel through the index and API as integer decimal strings in **connects**, and the UI formats them with `BigInt` into CC. Approximate hashrates and statistical attempt counts are not monetary values.
 
-**Index:** SQLite is stored in `data/<network>.sqlite` by default. Backfill uses `getblock(hash, 2)` from genesis, then follows the tip. This supplies address/domain history without a node `txindex` or `txospenderindex`. Confirmed spends are tracked locally. Reorganizations, shorter tips and partial sync failures are handled atomically. Restarting resumes from the stored tip. Sync uses bounded block batches, including a retained-payload estimate budget; a complete large block still needs enough server memory to decode.
+**Index:** SQLite is stored in a genesis-specific file under `data/` by default (see upgrade instructions). Backfill uses `getblock(hash, 2)` from genesis, then follows the tip. This supplies address/domain history without a node `txindex` or `txospenderindex`. Confirmed spends are tracked locally. Reorganizations, shorter tips and partial sync failures are handled atomically. Restarting resumes from the stored tip. Sync uses bounded block batches, including a retained-payload estimate budget; a complete large block still needs enough server memory to decode.
 
 **Pending transactions:** `getrawmempool`, `getrawtransaction` and `gettxspendingprevout` provide the live view. The displayed prevouts of unconfirmed transactions can be resolved through RPC, including unconfirmed parents. RPC failures are not presented as an empty mempool. Pending-spend lookups are best effort; “unspent in indexed chain” is not a promise that no pending claim exists.
 
 **Balances and bounties:** totals and catalogue filters cover only the confirmed indexed chain, excluding mempool activity. They can be incomplete during backfill or node synchronization. An address balance includes immature coinbase outputs; it is not a wallet's immediately spendable balance. A domain is a bounty target, not the recipient or owner of the funded value. The wallet's discovery window is not an expiry rule and does not hide older outputs here.
 
-**Proofs:** the decoder supports the current domain-only P2C v1 TLS profile and checks framing, challenge binding and work hash. It does **not** independently validate the TLS signature, root trust, domain authorization, consensus rules or historical MTP certificate validity. Those belong to the node. Certificate dates are historical display metadata; a certificate expiring today does not invalidate an old confirmed claim. Expected attempts are a probability estimate, not the number of connections actually made.
+**Proofs:** the decoder accepts **only the domain-only P2C v2 TLS profile** and checks framing, challenge binding and work hash. Versions other than 2 return HTTP 422. The connection work is `TaggedHash("ConnectCoin/P2C/work/v2", ClientHello || ServerHello || EncryptedExtensions || Certificate)`, including those four complete handshake headers. The version byte and **the entire CertificateVerify message** (header, lengths, scheme and signature) are excluded. CertificateVerify remains mandatory for authentication; its selected scheme must be offered by ClientHello and be `0x0403` (`ecdsa_secp256r1_sha256`), `0x0804` (`rsa_pss_rsae_sha256`) or `0x0809` (`rsa_pss_pss_sha256`). These are not the issuer-signature algorithms of the X.509 certificates.
+
+The claim challenge deliberately retains the tag `ConnectCoin/P2C/claim/v1`: it hashes the final non-witness transaction ID in internal byte order followed by the little-endian input index. That tag is not legacy proof support. `workHash` is displayed in reversed uint256/RPC byte order; `transcriptHash` is the ordinary SHA-256 digest over the same four messages, in TLS byte order.
+
+The explorer does **not** independently validate the TLS signature, root trust, domain authorization, consensus rules or historical MTP certificate validity. Those belong to the node. Certificate dates are historical display metadata; a certificate expiring today does not invalidate an old confirmed claim. Expected attempts are a probability estimate, not the number of connections actually made. Root certificates version **1** is separate from proof version **2**. The genesis allocation is not a current balance, and `MAX_MONEY` is a validation bound, not circulating supply.
 
 ## Deployment and security
 
@@ -83,7 +115,9 @@ For public access, place the **production** build behind an HTTPS reverse proxy 
 
 Budget storage for indexed transactions and P2C witnesses. Individual protocol-limit blocks can expand to hundreds of MB of decoded RPC JSON, so provide several GB of RAM and measure resource usage against your actual chain before public deployment. This first version has not been load-tested against a full production-sized chain.
 
-`GET /api/health` returns 200 only when the node is reachable, out of initial block download, and the index has caught up; otherwise 503. `GET /api/status` includes network, connection, index height and any operational warning. When offline, indexed pages can still be read with a visible cached-data warning.
+`GET /api/health` returns 200 only when the node is reachable, out of initial block download, and the index has caught up; otherwise 503. `GET /api/status` includes network, connection, index height and any operational warning. `GET /api/network` exposes the current network/protocol catalog and the observed RPC genesis, never credentials or local paths. When offline, current-chain indexed pages can still be read with a visible cached-data warning. An incompatible saved genesis is rejected at startup, rather than serving cached balances from an old chain.
+
+HTTP bind errors (for example, a privileged or occupied port) do not start indexing or announce a listening server. Graceful shutdown waits for active HTTP requests and index polling before closing SQLite.
 
 ## Development
 
@@ -95,6 +129,6 @@ npm run build
 npm run format:check
 ```
 
-The development command accepts the same network, RPC and database options as `npm start`. Tests use local fixture RPC servers and temporary SQLite files; they do not connect to or modify a wallet. Coverage includes monetary precision, typed outputs, P2C proof framing/hash checks, RPC authentication/errors/large responses, API routes, pagination, network selection, restart and reorg rollback.
+The development command accepts the same network, RPC and database options as `npm start`. Tests use local fixture RPC servers and temporary SQLite files; they do not connect to or modify a wallet. Coverage includes monetary precision, typed outputs, v2-only proof framing/hash checks and CertificateVerify exclusion, RPC authentication/errors/large responses, API routes, pagination, current genesis headers/network selection, legacy-index rejection without deletion, restart/reorg rollback and HTTP startup/shutdown races.
 
 Source layout: `src/server` contains RPC, indexing, proof decoding and HTTP routes; `src/shared` contains the API model; `src/client` contains the React interface. Vite builds the frontend into `dist/client`, and TypeScript builds the backend into `dist/server`.

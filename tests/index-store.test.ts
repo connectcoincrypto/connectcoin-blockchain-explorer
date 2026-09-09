@@ -4,6 +4,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { IndexStore } from '../src/server/index-store.js';
+import { DatabaseSync } from 'node:sqlite';
+import { NETWORKS } from '../src/shared/networks.js';
 
 const hash = (n: number): string => n.toString(16).padStart(64, '0');
 const pubkey = '79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798';
@@ -33,7 +35,7 @@ function transaction(id: number, outputs: any[], inputs?: any[]) {
 function block(height: number, id: number, tx: any[], previous?: any) {
   return {
     height: String(height),
-    hash: hash(id),
+    hash: height === 0 ? NETWORKS.testnet4.genesis!.hash : hash(id),
     time: String(1700000000 + height * 10),
     nTx: String(tx.length),
     size: '1200',
@@ -230,6 +232,7 @@ test('restart resumes in bounded batches and refuses mismatched genesis or netwo
     assert.throws(() => store!.bindNetwork('testnet4', hash(999)), /does not match/);
     assert.throws(() => store!.bindNetwork('main', hash(100)), /does not match/);
     const foreign = block(0, 999, [transaction(999, [keyOutput('15')])]);
+    foreign.hash = hash(999);
     await assert.rejects(store.sync(new MockRpc([foreign])), /does not match/);
     assert.equal(store.getTip()!.height, 2);
     assert.throws(() => new IndexStore(path, 'main'), /belongs to testnet4/);
@@ -338,6 +341,63 @@ test('pagination is stable and incomplete pruned backfill fails with an actionab
     assert.equal(store.account('domain', 'example.com', 2, 1).transactions.items[0].txid, hash(2));
     assert.throws(() => store.listBlocks(0, 10), /positive integer/);
     assert.throws(() => store.bounties(1, 101), /between 1 and 100/);
+  } finally {
+    store.close();
+  }
+});
+
+test('an empty index rejects old genesis and wrong-chain RPC before indexing any blocks', async () => {
+  const store = new IndexStore(':memory:', 'testnet4');
+  try {
+    const rpc = new MockRpc(chain());
+    rpc.blocks[0].hash = '06a1a1f822fed4a412aedb19315f1e85c963ad9b3c10e88ff12626b4b1389115';
+    await assert.rejects(store.sync(rpc), /current P2C v2 network/);
+    assert.equal(store.getTip(), undefined);
+    rpc.blocks = chain();
+    rpc.chain = 'test';
+    await assert.rejects(store.sync(rpc), /current P2C v2 network/);
+    assert.equal(store.overview().transactionCount, 0);
+    rpc.chain = 'testnet4';
+    await store.sync(rpc);
+    assert.equal(store.getTip()!.height, 2);
+  } finally {
+    store.close();
+  }
+});
+
+test('opening an old-genesis database refuses cached reads without deleting the preserved index', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'connectcoin-legacy-index-test-'));
+  const path = join(directory, 'old-chain.sqlite');
+  try {
+    const store = new IndexStore(path, 'testnet4');
+    await store.sync(new MockRpc(chain()));
+    store.close();
+    const oldGenesis = '06a1a1f822fed4a412aedb19315f1e85c963ad9b3c10e88ff12626b4b1389115';
+    const legacy = new DatabaseSync(path);
+    legacy.prepare("UPDATE metadata SET value = ? WHERE key = 'genesis'").run(oldGenesis);
+    legacy.close();
+    assert.throws(() => new IndexStore(path, 'testnet4'), /Preserve this file.*new --database/);
+    const preserved = new DatabaseSync(path, { readOnly: true });
+    try {
+      assert.equal(preserved.prepare('SELECT COUNT(*) AS n FROM blocks').get()!.n, 3);
+      assert.equal(preserved.prepare('SELECT COUNT(*) AS n FROM transactions').get()!.n, 5);
+      assert.equal(
+        preserved.prepare("SELECT value FROM metadata WHERE key = 'genesis'").get()!.value,
+        oldGenesis,
+      );
+    } finally {
+      preserved.close();
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('mainnet cannot bind a historical or invented operational genesis', () => {
+  const store = new IndexStore(':memory:', 'main');
+  try {
+    assert.throws(() => store.bindNetwork('main', hash(100)), /not launched/);
+    assert.equal(store.getTip(), undefined);
   } finally {
     store.close();
   }

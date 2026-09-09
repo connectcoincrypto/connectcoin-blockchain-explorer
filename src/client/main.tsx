@@ -45,6 +45,8 @@ import type {
 } from '../shared/types';
 import { outputLabel } from '../shared/types';
 import { outputPath } from '../shared/links';
+import { NETWORKS, PROTOCOL } from '../shared/networks';
+import type { DecodedP2CProof } from '../server/proof';
 import { ThemePicker } from './ThemePicker';
 import './style.css';
 
@@ -576,7 +578,8 @@ function Overview() {
           value={number(s?.nodeHeight)}
           sub={
             <>
-              Target interval <strong>{s?.network === 'regtest' ? '10 minutes' : '10 seconds'}</strong>
+              Target interval{' '}
+              <strong>{s ? `${NETWORKS[s.network].targetSpacingSeconds} seconds` : '—'}</strong>
             </>
           }
           icon={<Box size={18} />}
@@ -689,7 +692,86 @@ function Overview() {
           </dl>
         </Panel>
       </div>
+      {s && <NetworkDetails status={s} />}
     </>
+  );
+}
+function NetworkDetails({ status }: { status: ExplorerStatus }) {
+  const network = NETWORKS[status.network];
+  const genesis = network.genesis;
+  return (
+    <Panel title="Network parameters · P2C v2">
+      <div className="proof-content">
+        <p className="muted small">
+          Current Core defaults · reset September 9, 2026. Live chain data comes from the node.
+          {network.testChain
+            ? ' Test coins have no promised mainnet conversion.'
+            : ' Mainnet is not launched.'}
+        </p>
+        <dl>
+          <Field label="Expected genesis">
+            {genesis ? (
+              <HashValue value={genesis.hash} to={`/block/${genesis.hash}`} full />
+            ) : (
+              'No operational genesis'
+            )}
+          </Field>
+          <Field label="Genesis reported by RPC">
+            <HashValue value={status.genesis} full />
+          </Field>
+          <div className="field-grid">
+            <Field label="P2C proof version">{PROTOCOL.p2cProofVersion} only · TLS 1.3</Field>
+            <Field label="Root certificates version">{PROTOCOL.p2cRootCertificatesVersion}</Field>
+            <Field label="Address prefix">{network.bech32Hrp}</Field>
+            <Field label="Coinbase maturity">{PROTOCOL.coinbaseMaturity} blocks</Field>
+            <Field label="Maximum block weight">{number(PROTOCOL.maxBlockWeight)} WU</Field>
+            <Field label="Halving interval">{number(network.subsidyHalvingInterval)} blocks</Field>
+          </div>
+        </dl>
+        <details className="certificate">
+          <summary>Genesis and protocol details</summary>
+          <dl>
+            {genesis && (
+              <>
+                <Field label="Genesis transaction / Merkle root">
+                  <HashValue value={genesis.merkleRoot} to={`/tx/${genesis.merkleRoot}`} full />
+                </Field>
+                <Field label="Genesis public key">
+                  <HashValue value={genesis.publicKey} full />
+                </Field>
+                <div className="field-grid">
+                  <Field label="Genesis allocation">{money(genesis.rewardConnects)}</Field>
+                  <Field label="Genesis timestamp">
+                    {genesis.time} · {date(genesis.time)}
+                  </Field>
+                  <Field label="Genesis nonce">{genesis.nonce}</Field>
+                  <Field label="Genesis bits">0x{genesis.bits}</Field>
+                </div>
+              </>
+            )}
+            <div className="field-grid">
+              <Field label="Base initial subsidy">{money(PROTOCOL.initialBlockSubsidyConnects)}</Field>
+              <Field label="Atomic units per CC">{number(Number(PROTOCOL.connectsPerCoin))} connects</Field>
+              <Field label="Maximum proof size">{PROTOCOL.maxP2CProofBytes / 1024} KiB</Field>
+              <Field label="Maximum certificates">{PROTOCOL.maxP2CCertificates}</Field>
+              <Field label="Default P2P port">{network.p2pPort}</Field>
+              <Field label="Default RPC port (private)">{network.rpcPort}</Field>
+              <Field label="Default network magic">{network.defaultNetworkMagic}</Field>
+              <Field label="RandomX epoch / lag">
+                {network.randomxEpochBlocks
+                  ? `${number(network.randomxEpochBlocks)} / ${network.randomxEpochLag} blocks`
+                  : 'Fixed regtest key'}
+              </Field>
+            </div>
+          </dl>
+          <p className="muted small">
+            The genesis allocation is not a current balance. Block subsidy decreases with halvings and block
+            weight. Ports, signet magic and regtest parameters describe Core defaults, not custom node
+            settings.
+          </p>
+        </details>
+      </div>
+    </Panel>
   );
 }
 function Blocks() {
@@ -1044,7 +1126,7 @@ function TransactionDetail() {
   );
 }
 function ProofPanel({ txid, index, onClose }: { txid: string; index: number; onClose: () => void }) {
-  const api = useApi<any>(`/api/transactions/${txid}/proof/${index}`);
+  const api = useApi<DecodedP2CProof>(`/api/transactions/${txid}/proof/${index}`);
   const p = api.data;
   useEffect(() => {
     document.getElementById('proof-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1086,19 +1168,27 @@ function ProofPanel({ txid, index, onClose }: { txid: string; index: number; onC
               Download JSON
             </button>
           </div>
+          <p className="muted small">{p.validationScope}</p>
           <p className="muted small">
-            These are decoding and hash checks. Full TLS signature, certificate trust and consensus validation
-            are performed by the node.
+            Proof v2 hashes ClientHello, ServerHello, EncryptedExtensions and Certificate. CertificateVerify
+            is mandatory for authentication, but its entire message is excluded from connection work.
           </p>
           <dl>
             <div className="field-grid">
               <Field label="Proof version">{p.version}</Field>
               <Field label="Proof size">{bytes(p.byteLength)}</Field>
               <Field label="TLS cipher suite">{p.cipherSuite?.name ?? '—'}</Field>
-              <Field label="Signature scheme">{p.signatureScheme?.name ?? '—'}</Field>
+              <Field label="CertificateVerify signature algorithm">
+                0x{p.signatureScheme.code.toString(16).padStart(4, '0')} ({p.signatureScheme.name})
+              </Field>
+              <Field label="Work hash tag">{p.workHashTag}</Field>
+              <Field label="Work preimage size">{bytes(p.workPreimageByteLength)}</Field>
             </div>
             <Field label="Work hash">
               <HashValue value={p.workHash} full />
+            </Field>
+            <Field label="TLS transcript SHA-256">
+              <HashValue value={p.transcriptHash} full />
             </Field>
             <Field label="ClientHello challenge">
               <HashValue value={p.challenge} full />
@@ -1109,16 +1199,17 @@ function ProofPanel({ txid, index, onClose }: { txid: string; index: number; onC
           </dl>
           <h3>Handshake messages</h3>
           <div className="handshake">
-            {p.messages.map((m: any, i: number) => (
+            {p.messages.map((m, i) => (
               <div key={m.name}>
                 <span>{i + 1}</span>
                 <strong>{m.name}</strong>
                 <small>{bytes(m.length)}</small>
+                <small>{m.includedInWorkHash ? 'Included in work' : 'Authentication only'}</small>
               </div>
             ))}
           </div>
           <h3>Certificate chain</h3>
-          {p.certificates.map((c: any, i: number) => (
+          {p.certificates.map((c, i) => (
             <details className="certificate" key={i} open={i === 0}>
               <summary>
                 Certificate {i + 1} · {i === 0 ? 'Server certificate' : 'Intermediate'}

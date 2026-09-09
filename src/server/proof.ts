@@ -7,9 +7,15 @@ export interface DecodedP2CProof {
   challenge: string;
   expectedChallenge: string;
   challengeMatches: boolean;
+  /** Tagged connection-work hash in Core's reversed uint256/RPC display order. */
   workHash: string;
+  workHashTag: string;
+  workPreimageByteLength: number;
+  workHashScope: string;
+  /** SHA-256 digest of the first four complete messages, in TLS digest byte order. */
+  transcriptHash: string;
   meetsTarget?: boolean;
-  messages: { name: string; type: number; length: number }[];
+  messages: { name: string; type: number; length: number; includedInWorkHash: boolean }[];
   certificates: {
     subject: string;
     issuer: string;
@@ -42,6 +48,7 @@ const SIGNATURES: Record<number, string> = {
   0x0809: 'rsa_pss_pss_sha256',
 };
 const HELLO_RETRY_RANDOM = 'cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c';
+const WORK_HASH_TAG = 'ConnectCoin/P2C/work/v2';
 
 function requireCondition(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -173,7 +180,7 @@ function serverHello(body: Buffer, client: ReturnType<typeof clientHello>): numb
   requireCondition(reader.u16() === 0x0303, 'Invalid ServerHello legacy TLS version');
   requireCondition(
     reader.read(32).toString('hex') !== HELLO_RETRY_RANDOM,
-    'HelloRetryRequest is forbidden in P2C v1',
+    'HelloRetryRequest is forbidden in P2C v2',
   );
   const sessionSize = reader.u8();
   requireCondition(
@@ -232,7 +239,7 @@ function certificateChain(body: Buffer): DecodedP2CProof['certificates'] {
 
 /**
  * Decode witness data for display, not as a consensus validator. These checks
- * cover framing, the v1 TLS profile, challenge binding and optional work target.
+ * cover framing, the v2 TLS profile, challenge binding and optional work target.
  * They do not verify CertificateVerify, trust roots, certificate validity at
  * median time past, domain binding to the spent output or transaction validity.
  * The supplied txid must be the non-witness transaction ID in RPC display order.
@@ -252,7 +259,7 @@ export function decodeP2CProof(
     'Invalid P2C proof hexadecimal encoding',
   );
   requireCondition(
-    typeof txid === 'string' && /^[0-9a-f]{64}$/i.test(txid),
+    typeof txid === 'string' && txid.length === 64 && /^[0-9a-f]{64}$/i.test(txid),
     'Invalid non-witness transaction ID',
   );
   requireCondition(
@@ -260,27 +267,33 @@ export function decodeP2CProof(
     'Invalid P2C input index',
   );
   if (target !== undefined)
-    requireCondition(typeof target === 'string' && /^[0-9a-f]{64}$/i.test(target), 'Invalid P2C work target');
+    requireCondition(
+      typeof target === 'string' && target.length === 64 && /^[0-9a-f]{64}$/i.test(target),
+      'Invalid P2C work target',
+    );
   const bytes = Buffer.from(proofHex, 'hex');
   const reader = new Reader(bytes, 'P2C proof');
   const version = reader.u8();
-  requireCondition(version === 1, 'Unsupported P2C proof version');
+  requireCondition(version === 2, 'Unsupported P2C proof version: only v2 is supported');
   const messages: DecodedP2CProof['messages'] = [];
   const bodies: Buffer[] = [];
+  let workPreimageByteLength = 0;
   for (const profile of MESSAGE_PROFILE) {
     const type = reader.u8();
     const size = reader.u24();
     requireCondition(type === profile.type, 'Unexpected TLS handshake message order');
     requireCondition(size + 4 <= profile.maximum, `${profile.name} exceeds P2C message size limit`);
     bodies.push(reader.read(size));
-    messages.push({ name: profile.name, type, length: size + 4 });
+    const includedInWorkHash = profile.type !== 15;
+    if (includedInWorkHash) workPreimageByteLength += size + 4;
+    messages.push({ name: profile.name, type, length: size + 4, includedInWorkHash });
   }
   reader.end();
 
   const client = clientHello(bodies[0]);
   const cipher = serverHello(bodies[1], client);
   const encryptedExtensions = extensions(new Reader(bodies[2], 'EncryptedExtensions'));
-  requireCondition(!encryptedExtensions.has(42), 'TLS early_data is forbidden in P2C v1');
+  requireCondition(!encryptedExtensions.has(42), 'TLS early_data is forbidden in P2C v2');
   const certificates = certificateChain(bodies[3]);
   const verify = new Reader(bodies[4], 'CertificateVerify');
   const scheme = verify.u16();
@@ -299,8 +312,13 @@ export function decodeP2CProof(
     'ConnectCoin/P2C/claim/v1',
     Buffer.concat([Buffer.from(txid, 'hex').reverse(), indexBytes]),
   ).toString('hex');
-  // Version is excluded; uint256 RPC display order is reversed SHA-256 bytes.
-  const workHash = taggedHash('ConnectCoin/P2C/work/v1', bytes.subarray(1)).reverse().toString('hex');
+  // Hash the exact raw CH || SH || EE || Certificate, including their headers.
+  // The version byte and ALL CertificateVerify bytes (header, scheme, lengths,
+  // signature) are excluded. CertificateVerify is still parsed above and must
+  // authenticate this transcript in Core; this display decoder does not verify it.
+  const workPreimage = bytes.subarray(1, 1 + workPreimageByteLength);
+  const workHash = taggedHash(WORK_HASH_TAG, workPreimage).reverse().toString('hex');
+  const transcriptHash = createHash('sha256').update(workPreimage).digest('hex');
   return {
     version,
     byteLength: bytes.length,
@@ -309,6 +327,11 @@ export function decodeP2CProof(
     expectedChallenge,
     challengeMatches: client.challenge === expectedChallenge,
     workHash,
+    workHashTag: WORK_HASH_TAG,
+    workPreimageByteLength,
+    workHashScope:
+      'ClientHello || ServerHello || EncryptedExtensions || Certificate, including handshake headers. The proof-version byte and entire CertificateVerify message are excluded.',
+    transcriptHash,
     ...(target === undefined ? {} : { meetsTarget: BigInt(`0x${workHash}`) <= BigInt(`0x${target}`) }),
     messages,
     certificates,
@@ -316,6 +339,6 @@ export function decodeP2CProof(
     signatureScheme: { code: scheme, name: SIGNATURES[scheme] },
     rawHex: bytes.toString('hex'),
     validationScope:
-      'Display checks only: TLS structure, claim challenge and work target. Certificate signature, chain trust, median-time validity, spent-output domain binding and consensus validity are not verified here; the node validates transactions.',
+      'Display checks only: P2C v2 TLS structure, claim challenge and work target. CertificateVerify is mandatory but its signature is not verified here. Certificate-chain signatures, chain trust, median-time validity, spent-output domain binding and consensus validity are not verified here; the node validates transactions.',
   };
 }

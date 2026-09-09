@@ -10,6 +10,7 @@ import type {
   TransactionSummary,
 } from '../shared/types.js';
 import { normalizeBlock, normalizeTransaction, safeInteger } from './normalize.js';
+import { NETWORKS } from '../shared/networks.js';
 
 interface Rpc {
   call<T = any>(method: string, params?: unknown[]): Promise<T>;
@@ -109,6 +110,23 @@ export class IndexStore {
         `Index belongs to ${existing}, not ${network}. Use a separate index database for each network.`,
       );
     }
+    // Never serve an explicitly selected pre-reset index as the current chain,
+    // even while RPC is offline. Keep its blocks and balances untouched.
+    const expected = NETWORKS[network];
+    const storedGenesis = this.metadata('genesis');
+    const storedChain = this.metadata('chain');
+    const firstBlock = this.db.prepare('SELECT hash FROM blocks WHERE height = 0').get() as
+      { hash: string } | undefined;
+    if (
+      (storedChain && storedChain !== expected.chain) ||
+      (storedGenesis && storedGenesis !== expected.genesis?.hash) ||
+      (firstBlock && firstBlock.hash !== expected.genesis?.hash)
+    ) {
+      this.db.close();
+      throw new Error(
+        'Index genesis or chain does not match the current P2C v2 network. Preserve this file and choose a new --database path, or remove the database override to use the genesis-specific default.',
+      );
+    }
     this.db.prepare('INSERT OR IGNORE INTO metadata(key, value) VALUES (?, ?)').run('network', network);
   }
 
@@ -120,6 +138,13 @@ export class IndexStore {
 
   bindNetwork(chain: string, genesis: string): void {
     if (!chain || !genesis) throw new Error('RPC did not identify its chain and genesis block.');
+    const expected = NETWORKS[this.network];
+    if (!expected.genesis) throw new Error('Mainnet has no operational genesis and is not launched.');
+    if (chain !== expected.chain || genesis !== expected.genesis.hash) {
+      throw new Error(
+        'RPC chain or genesis does not match the current P2C v2 network. Upgrade the node to the matching chain.',
+      );
+    }
     const storedChain = this.metadata('chain');
     const storedGenesis = this.metadata('genesis');
     if ((storedChain && storedChain !== chain) || (storedGenesis && storedGenesis !== genesis)) {

@@ -6,6 +6,7 @@ import { readConfig, HELP } from './config.js';
 import { RpcClient } from './rpc.js';
 import { IndexStore } from './index-store.js';
 import { createApp } from './app.js';
+import { startHttpServer } from './lifecycle.js';
 import type { ExplorerStatus } from '../shared/types.js';
 
 if (process.argv.includes('--help')) {
@@ -62,9 +63,12 @@ let metricsTime = 0;
 async function poll() {
   let delay = config.pollMs;
   try {
+    if (!config.expectedGenesis) throw new Error('MAINNET_UNLAUNCHED');
     const chain = await rpc.call<any>('getblockchaininfo');
     if (chain.chain !== config.expectedChain) throw new Error('NETWORK_MISMATCH');
     const genesis = await rpc.call<string>('getblockhash', [0]);
+    // Retain the observed identity for diagnostics, even when it is an old chain.
+    if (/^[0-9a-f]{64}$/.test(genesis)) status.genesis = genesis;
     store.bindNetwork(chain.chain, genesis);
     const synced = await store.sync(rpc, 25);
     Object.assign(status, {
@@ -103,11 +107,14 @@ async function poll() {
       connected: false,
       syncing: false,
       indexedHeight: store.getTip()?.height ?? -1,
-      error: mismatch
-        ? 'The node network or genesis does not match this explorer. Check the network option and database.'
-        : /prun/i.test(error?.message ?? '')
-          ? 'A full history requires an unpruned node. Restore the missing blocks before indexing.'
-          : 'Node RPC is unavailable. Check the RPC URL, authentication and that the node was started with server=1.',
+      error:
+        error?.message === 'MAINNET_UNLAUNCHED'
+          ? 'Mainnet is not launched and has no operational genesis. Use --testnet for the current P2C v2 beta.'
+          : mismatch
+            ? 'The node chain or genesis does not match the current P2C v2 network. Upgrade the node to the reset chain and check --network/--datadir. Old-chain data is not imported.'
+            : /prun/i.test(error?.message ?? '')
+              ? 'A full history requires an unpruned node. Restore the missing blocks before indexing.'
+              : 'Node RPC is unavailable. Check the RPC URL, authentication and that the node was started with server=1.',
     });
   } finally {
     if (!stopped)
@@ -116,32 +123,37 @@ async function poll() {
       }, delay);
   }
 }
-const server = app.listen(config.port, config.host, () => {
-  console.log(`${config.title} — http://${config.host}:${config.port}`);
-  console.log('RPC credentials remain on the server. Press Ctrl+C to stop.');
-  refresh = poll();
-});
-server.requestTimeout = 30_000;
-server.headersTimeout = 15_000;
-server.on('error', (error) => {
+function reportError(error: Error) {
   console.error(error.message);
   process.exitCode = 1;
-  stopped = true;
-  if (timer) clearTimeout(timer);
-  store.close();
-});
-async function shutdown() {
-  if (stopped) return;
-  stopped = true;
-  if (timer) clearTimeout(timer);
-  server.close();
-  await refresh;
-  await vite?.close();
-  store.close();
 }
+const { shutdown } = startHttpServer({
+  listener: app,
+  port: config.port,
+  host: config.host,
+  onListening() {
+    console.log(`${config.title} — http://${config.host}:${config.port}`);
+    console.log('RPC credentials remain on the server. Press Ctrl+C to stop.');
+    refresh = poll();
+  },
+  onStopping() {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+  },
+  waitForWork: () => refresh,
+  waitForRequests: () => app.waitForRequests(),
+  async closeResources() {
+    try {
+      await vite?.close();
+    } finally {
+      store.close();
+    }
+  },
+  onError: reportError,
+});
 process.once('SIGINT', () => {
-  void shutdown();
+  void shutdown().catch(reportError);
 });
 process.once('SIGTERM', () => {
-  void shutdown();
+  void shutdown().catch(reportError);
 });

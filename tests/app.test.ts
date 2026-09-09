@@ -12,6 +12,7 @@ import { readConfig } from '../src/server/config.js';
 import { IndexStore } from '../src/server/index-store.js';
 import type { RpcClient } from '../src/server/rpc.js';
 import type { ExplorerStatus } from '../src/shared/types.js';
+import { NETWORKS, PROTOCOL } from '../src/shared/networks.js';
 
 const hash = (n: number): string => n.toString(16).padStart(64, '0');
 const pubkey = '79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798';
@@ -40,7 +41,7 @@ function transaction(id: number, outputs: any[], inputs?: any[]) {
 function block(height: number, id: number, tx: any[], previous?: any) {
   return {
     height: String(height),
-    hash: hash(id),
+    hash: height === 0 ? NETWORKS.testnet4.genesis!.hash : hash(id),
     time: String(1700000000 + height * 10),
     nTx: String(tx.length),
     size: '10000',
@@ -100,7 +101,7 @@ function proof(txid: string, index: number): string {
   const cert = new X509Certificate(rootCertificates[0]).raw;
   const certificates = concat(number(0, 1), vector(concat(vector(cert, 3), number(0, 2)), 3));
   return concat(
-    Buffer.from([1]),
+    Buffer.from([2]),
     handshake(1, client),
     handshake(2, server),
     handshake(8, Buffer.from([0, 0])),
@@ -134,7 +135,9 @@ class MockRpc {
         txid: hash(1),
         vout: String(index),
         sequence: '4294967295',
-        ...([1, 21].includes(index) ? { txinwitness: [index === 1 ? proof(hash(2), 1) : '01'] } : {}),
+        ...([1, 21].includes(index)
+          ? { txinwitness: [index === 1 ? proof(hash(2), 1) : '01' + proof(hash(2), 21).slice(2)] }
+          : {}),
       })),
     );
     this.blocks = [genesis, block(1, 101, [transaction(3, [keyOutput('15')]), redemption], genesis)];
@@ -273,6 +276,18 @@ test('HTTP status and health expose the testnet title without RPC credentials', 
   assert.equal((await api.get('/api/status')).connected, false);
 });
 
+test('HTTP network metadata describes the current genesis and v2 protocol without exposing configuration', async (t) => {
+  const api = await setup(t);
+  const network = await api.get('/api/network');
+  assert.deepEqual(network.parameters, NETWORKS.testnet4);
+  assert.deepEqual(network.protocol, PROTOCOL);
+  assert.equal(network.observedGenesis, null);
+  api.status.genesis = NETWORKS.testnet4.genesis!.hash;
+  assert.equal((await api.get('/api/network')).observedGenesis, NETWORKS.testnet4.genesis!.hash);
+  assert.equal('rpcPassword' in network, false);
+  assert.equal('rpcUrl' in network, false);
+});
+
 test('HTTP block and transaction pagination preserve exact amounts, numeric output types and enriched inputs', async (t) => {
   const api = await setup(t);
   const overview = await api.get('/api/overview');
@@ -284,7 +299,7 @@ test('HTTP block and transaction pagination preserve exact amounts, numeric outp
     [1, 0],
   );
   const byHeight = await api.get('/api/blocks/0');
-  const byHash = await api.get(`/api/blocks/${hash(100)}`);
+  const byHash = await api.get(`/api/blocks/${NETWORKS.testnet4.genesis!.hash}`);
   assert.deepEqual(byHeight, byHash);
   assert.equal(byHeight.confirmations, 2);
   assert.equal(byHeight.transactions.items[0].totalOutput, '220000000000000022');
@@ -326,6 +341,9 @@ test('HTTP proof endpoint decodes the selected P2C witness and distinguishes mis
   const api = await setup(t);
   const decoded = await api.get(`/api/transactions/${hash(2)}/proof/1`);
   assert.equal(decoded.domain, 'example.com');
+  assert.equal(decoded.version, 2);
+  assert.equal(decoded.workHashTag, 'ConnectCoin/P2C/work/v2');
+  assert.equal(decoded.messages.at(-1).includedInWorkHash, false);
   assert.equal(decoded.challengeMatches, true);
   assert.equal(decoded.meetsTarget, true);
   assert.equal(decoded.rawHex, proof(hash(2), 1));
@@ -335,7 +353,8 @@ test('HTTP proof endpoint decodes the selected P2C witness and distinguishes mis
   );
   assert.match(decoded.validationScope, /not verified here/);
   await api.get(`/api/transactions/${hash(2)}/proof/0`, 404);
-  await api.get(`/api/transactions/${hash(2)}/proof/21`, 422);
+  const legacy = await api.get(`/api/transactions/${hash(2)}/proof/21`, 422);
+  assert.match(legacy.error, /Only proof version 2/);
   await api.get(`/api/transactions/${hash(2)}/proof/999`, 404);
   await api.get(`/api/transactions/${hash(2)}/proof/-1`, 400);
 });
@@ -357,7 +376,7 @@ test('HTTP address/domain accounts, bounty filters and search reflect confirmed 
   assert.equal((await api.get('/api/bounties?domain=absent.example')).total, 0);
   for (const [query, path] of [
     ['0', '/block/0'],
-    [hash(100), `/block/${hash(100)}`],
+    [NETWORKS.testnet4.genesis!.hash, `/block/${NETWORKS.testnet4.genesis!.hash}`],
     [hash(2), `/tx/${hash(2)}`],
     ['EXAMPLE.COM', '/domain/example.com'],
     [address, `/address/${address}`],

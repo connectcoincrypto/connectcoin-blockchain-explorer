@@ -3,6 +3,7 @@ import test from 'node:test';
 import { join, resolve } from 'node:path';
 import { readConfig } from '../src/server/config.js';
 import { outputLabel } from '../src/shared/types.js';
+import { NETWORKS } from '../src/shared/networks.js';
 
 test('output labels preserve numeric protocol types and exact requested names', () => {
   assert.equal(outputLabel(1), 'output type: 1 (pay-to-public-key)');
@@ -17,7 +18,8 @@ test('testnet flag selects testnet4, the exact requested title and network-speci
   assert.equal(config.title, 'ConnectCoin Testnet Explorer');
   assert.equal(config.rpcUrl, 'http://127.0.0.1:48178');
   assert.equal(config.cookieFile, resolve('node-data', 'testnet4', '.cookie'));
-  assert.equal(config.database, resolve('data', 'testnet4.sqlite'));
+  assert.equal(config.expectedGenesis, '38cae555fb78f44c31e7d6859d0476252b321dae8b6312afefe0a45fc3fd112a');
+  assert.equal(config.database, resolve('data', 'testnet4-38cae555fb78f44c.sqlite'));
   assert.equal(config.host, '127.0.0.1');
   assert.equal(config.port, 3000);
   assert.equal(config.rpcUser, undefined);
@@ -38,10 +40,27 @@ test('each supported network gets its Core chain name, RPC port and distinct ind
     assert.equal(config.expectedChain, chain);
     assert.equal(config.rpcUrl, `http://127.0.0.1:${port}`);
     assert.equal(config.title, title);
-    assert.equal(config.database, resolve('data', `${network}.sqlite`));
+    assert.equal(config.expectedGenesis, NETWORKS[network].genesis?.hash);
+    assert.equal(
+      config.database,
+      resolve('data', `${network}-${NETWORKS[network].genesis?.hash.slice(0, 16) ?? 'unlaunched'}.sqlite`),
+    );
   }
   assert.equal(readConfig(['--regtest'], {}).network, 'regtest');
-  assert.equal(readConfig([], {}).network, 'main');
+  assert.equal(readConfig([], {}).network, 'testnet4');
+  assert.equal(readConfig(['--network', 'main'], {}).expectedGenesis, undefined);
+});
+
+test('default reset indexes do not reuse the old network-only file; explicit paths remain honored', () => {
+  for (const network of ['testnet3', 'testnet4', 'signet', 'regtest'] as const) {
+    assert.notEqual(readConfig(['--network', network], {}).database, resolve('data', `${network}.sqlite`));
+    assert.equal(
+      readConfig(['--network', network, '--database', `data/${network}.sqlite`], {}).database,
+      resolve('data', `${network}.sqlite`),
+    );
+  }
+  assert.equal(readConfig([], { EXPLORER_NETWORK: 'main' }).network, 'main');
+  assert.equal(readConfig([], { EXPLORER_DATABASE: 'custom.sqlite' }).database, resolve('custom.sqlite'));
 });
 
 test('explicit CLI choices override environment while password stays in environment', () => {

@@ -1,5 +1,6 @@
 import { bech32m } from 'bech32';
 import type { BlockSummary, Network, Transaction, TxInput, TxOutput } from '../shared/types.js';
+import { NETWORKS } from '../shared/networks.js';
 
 export function safeInteger(value: unknown, field = 'integer'): number {
   if (typeof value !== 'number' && (typeof value !== 'string' || !/^-?\d+$/.test(value))) {
@@ -53,7 +54,7 @@ function outputFields(raw: any, network: Network): Omit<TxOutput, 'index'> {
   const output: Omit<TxOutput, 'index'> = { type, value };
   if (type === 1) {
     output.pubkey = hex(raw.pubkey, 'output public key');
-    const hrp = network === 'main' ? 'cc' : network === 'regtest' ? 'ccrt' : 'tcc';
+    const hrp = NETWORKS[network].bech32Hrp;
     output.address =
       typeof raw.scriptPubKey?.address === 'string'
         ? raw.scriptPubKey.address
