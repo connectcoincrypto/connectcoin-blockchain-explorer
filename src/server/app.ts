@@ -141,6 +141,7 @@ export function createApp(runtime: Runtime) {
               address: previous.address,
               pubkey: previous.pubkey,
               domain: previous.domain,
+              signatureAlgorithmsMask: previous.signatureAlgorithmsMask,
             });
         }),
       );
@@ -238,7 +239,15 @@ export function createApp(runtime: Runtime) {
         throw new HttpError(404, 'No P2C proof on this input.');
       const previous = input.txid ? (await parentTransaction(input.txid))?.outputs[input.vout!] : undefined;
       try {
-        res.json(decodeP2CProof(input.witness[0], tx.txid, index, previous?.target));
+        res.json(
+          decodeP2CProof(
+            input.witness[0],
+            tx.txid,
+            index,
+            previous?.target,
+            previous?.signatureAlgorithmsMask ?? input.signatureAlgorithmsMask,
+          ),
+        );
       } catch {
         throw new HttpError(
           422,

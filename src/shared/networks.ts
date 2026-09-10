@@ -1,10 +1,11 @@
 import type { Network } from './types.js';
 
-// Consensus defaults from ConnectCoin Core's P2C v2 reset (2026-09-09):
+// Consensus defaults from ConnectCoin Core's P2C mask v1 reset (2026-09-09, d4d1ae56aa):
 // src/kernel/chainparams.cpp, src/chainparamsbase.cpp, src/consensus/{amount,consensus,p2c}.h.
+// The required output signature mask is layout v1; TLS proofs remain version 2 only.
 // Runtime chain height, difficulty, peer counts and balances must still come from RPC.
 export const PROTOCOL = {
-  revision: 'p2c-v2-2026-09-09',
+  revision: 'p2c-mask-v1-2026-09-09',
   p2cProofVersion: 2,
   p2cRootCertificatesVersion: 1,
   maxP2CProofBytes: 64 * 1024,
@@ -99,12 +100,12 @@ export const NETWORKS: Readonly<Record<Network, NetworkParameters>> = {
     directory: 'testnet3',
     genesis: {
       ...genesisDefaults,
-      hash: 'ca89051d3a1bcf96be2ed4943d347687af47b6fd0a155fc2b15ddcc103bd75af',
-      merkleRoot: '3477a829a66de337c0b0db26685a1f6294287f4e9655bd892245d85e3d51ee6d',
+      hash: '1025889d725c5d64c3ee38ab07d2de279ab57036a2482186c65806d6c0291787',
+      merkleRoot: '2e2e1a9fdad577fc8832a2e582f0149de3ab2032764a978c7e469b18f1c4099e',
       time: 1788912000,
-      nonce: 38388,
+      nonce: 66621,
     },
-    defaultNetworkMagic: '0db1484d',
+    defaultNetworkMagic: 'c7291ff5',
   },
   testnet4: {
     ...publicTestDefaults,
@@ -114,13 +115,13 @@ export const NETWORKS: Readonly<Record<Network, NetworkParameters>> = {
     directory: 'testnet4',
     genesis: {
       ...genesisDefaults,
-      hash: '38cae555fb78f44c31e7d6859d0476252b321dae8b6312afefe0a45fc3fd112a',
-      merkleRoot: 'e70bc6f9408b4997f2b8f4f227bddd122282ceb4cc5b58d326081ee411441d4e',
+      hash: '710dc5910cbef40216bd82ccfb66af2273b2b1d336b034c5794966904cb603bf',
+      merkleRoot: 'e09a12d2aca740a06be984897fa268d4f03317c2363748d4ab69768ed92ca555',
       publicKey: '2ef316afd6177619f68ecfc6521fc3fcbf7faa2b25273f6ddea7971fae0de144',
       time: 1788912001,
-      nonce: 199567,
+      nonce: 913,
     },
-    defaultNetworkMagic: '4e3d8178',
+    defaultNetworkMagic: '77d66cbc',
     dnsSeeds: ['connectcoin1.com', 'connectcoin2.com', 'connectcoin3.com', 'dememzea.tplinkdns.com'],
   },
   signet: {
@@ -132,12 +133,12 @@ export const NETWORKS: Readonly<Record<Network, NetworkParameters>> = {
     directory: 'signet',
     genesis: {
       ...genesisDefaults,
-      hash: '2a62fd84425bc1f6dce0343ec3f6c08b782d76df54d52e5e3b8153f5d27d94b4',
-      merkleRoot: '374929cb89e0db3685b45adde158b63ccb00be549aeaa8f7b8eeda01b51c23d0',
+      hash: 'a694dccdc04a316a4f4fe496f311aff981392f25ea18e4b7f77d9f449b9089fc',
+      merkleRoot: 'e9b9c33924f02701bc84751dc4701a1eef9b5c865fdc030b34843ed45db74dbf',
       time: 1788912002,
-      nonce: 27113,
+      nonce: 2069,
     },
-    defaultNetworkMagic: '4c48f3b3',
+    defaultNetworkMagic: '304c2f0c',
   },
   regtest: {
     ...publicTestDefaults,
@@ -149,11 +150,11 @@ export const NETWORKS: Readonly<Record<Network, NetworkParameters>> = {
     bech32Hrp: 'ccrt',
     genesis: {
       ...genesisDefaults,
-      hash: 'de48ff31cbff58a91ef359100fef13e6472f165e6f0410e52efcdacb1861f65a',
-      merkleRoot: 'a26cc36202eb5e29223338940ab72e985db833ef1c14340fce37bfded3e0f595',
+      hash: '53c5145452f6957a2674ab904726afc2d7643c4a4fb9c2beab193ea983e500f0',
+      merkleRoot: '9fee3081f6d76758b63691d412ce44408c471b02d0e5ae443aa5adf3a7345c9e',
       publicKey: '738a50e0af6185956d5e0c393859830eb70ea92351b19facbd47259cd7a10c27',
       time: 1296688602,
-      nonce: 26,
+      nonce: 20,
       bits: '207fffff',
     },
     targetSpacingSeconds: 600,
@@ -161,7 +162,7 @@ export const NETWORKS: Readonly<Record<Network, NetworkParameters>> = {
     difficultyRetargetInterval: 144,
     randomxEpochBlocks: 0,
     randomxEpochLag: 0,
-    defaultNetworkMagic: '8d6e0191',
+    defaultNetworkMagic: '3af83be3',
     dnsSeeds: ['dummySeed.invalid.'],
   },
 };

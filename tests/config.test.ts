@@ -18,8 +18,8 @@ test('testnet flag selects testnet4, the exact requested title and network-speci
   assert.equal(config.title, 'ConnectCoin Testnet Explorer');
   assert.equal(config.rpcUrl, 'http://127.0.0.1:48178');
   assert.equal(config.cookieFile, resolve('node-data', 'testnet4', '.cookie'));
-  assert.equal(config.expectedGenesis, '38cae555fb78f44c31e7d6859d0476252b321dae8b6312afefe0a45fc3fd112a');
-  assert.equal(config.database, resolve('data', 'testnet4-38cae555fb78f44c.sqlite'));
+  assert.equal(config.expectedGenesis, '710dc5910cbef40216bd82ccfb66af2273b2b1d336b034c5794966904cb603bf');
+  assert.equal(config.database, resolve('data', 'testnet4-710dc5910cbef402.sqlite'));
   assert.equal(config.host, '127.0.0.1');
   assert.equal(config.port, 3000);
   assert.equal(config.rpcUser, undefined);
@@ -61,6 +61,23 @@ test('default reset indexes do not reuse the old network-only file; explicit pat
   }
   assert.equal(readConfig([], { EXPLORER_NETWORK: 'main' }).network, 'main');
   assert.equal(readConfig([], { EXPLORER_DATABASE: 'custom.sqlite' }).database, resolve('custom.sqlite'));
+});
+
+test('signature-mask reset indexes do not reuse the previous proof-v2 genesis namespace', () => {
+  const previousGenesis = {
+    testnet3: 'ca89051d3a1bcf96be2ed4943d347687af47b6fd0a155fc2b15ddcc103bd75af',
+    testnet4: '38cae555fb78f44c31e7d6859d0476252b321dae8b6312afefe0a45fc3fd112a',
+    signet: '2a62fd84425bc1f6dce0343ec3f6c08b782d76df54d52e5e3b8153f5d27d94b4',
+    regtest: 'de48ff31cbff58a91ef359100fef13e6472f165e6f0410e52efcdacb1861f65a',
+  } as const;
+  for (const network of ['testnet3', 'testnet4', 'signet', 'regtest'] as const) {
+    const config = readConfig(['--network', network], {});
+    assert.notEqual(config.expectedGenesis, previousGenesis[network]);
+    assert.notEqual(
+      config.database,
+      resolve('data', `${network}-${previousGenesis[network].slice(0, 16)}.sqlite`),
+    );
+  }
 });
 
 test('explicit CLI choices override environment while password stays in environment', () => {

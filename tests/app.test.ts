@@ -24,6 +24,7 @@ const bountyOutput = (value: string, n: number) => ({
   domain: 'example.com',
   connection_work_target: 'f'.repeat(64),
   root_certificates_version: '1',
+  signature_algorithms_mask: n === 21 ? '6' : '7',
 });
 function transaction(id: number, outputs: any[], inputs?: any[]) {
   return {
@@ -308,6 +309,7 @@ test('HTTP block and transaction pagination preserve exact amounts, numeric outp
   assert.equal(first.outputs.items.length, 20);
   assert.equal(first.outputs.items[0].type, 1);
   assert.equal(first.outputs.items[1].type, 2);
+  assert.equal(first.outputs.items[1].signatureAlgorithmsMask, 7);
   assert.equal(first.outputs.items[0].value, '10000000000000001');
   assert.equal(typeof first.outputs.items[1].type, 'number');
   assert.equal(first.totalOutput, '220000000000000022');
@@ -323,6 +325,7 @@ test('HTTP block and transaction pagination preserve exact amounts, numeric outp
   assert.equal(second.inputs.items[1].outputType, 2);
   assert.equal(second.inputs.items[1].value, '10000000000000001');
   assert.equal(second.inputs.items[1].domain, 'example.com');
+  assert.equal(second.inputs.items[1].signatureAlgorithmsMask, 6);
   assert.equal(second.inputs.items[1].hasProof, true);
   assert.equal(second.inputs.items[1].witnessCount, 1);
   assert.equal('witness' in second.inputs.items[1], false);
@@ -342,6 +345,8 @@ test('HTTP proof endpoint decodes the selected P2C witness and distinguishes mis
   const decoded = await api.get(`/api/transactions/${hash(2)}/proof/1`);
   assert.equal(decoded.domain, 'example.com');
   assert.equal(decoded.version, 2);
+  assert.equal(decoded.signatureAlgorithmsMask, 7);
+  assert.equal(decoded.signatureSchemeAllowed, true);
   assert.equal(decoded.workHashTag, 'ConnectCoin/P2C/work/v2');
   assert.equal(decoded.messages.at(-1).includedInWorkHash, false);
   assert.equal(decoded.challengeMatches, true);
@@ -373,6 +378,10 @@ test('HTTP address/domain accounts, bounty filters and search reflect confirmed 
   assert.equal((await api.get('/api/bounties')).total, 1);
   assert.equal((await api.get('/api/bounties?state=spent&domain=example.com')).total, 2);
   assert.equal((await api.get('/api/bounties?state=all')).total, 3);
+  assert.deepEqual(
+    (await api.get('/api/bounties?state=all')).items.map((b: any) => b.signatureAlgorithmsMask),
+    [7, 7, 6],
+  );
   assert.equal((await api.get('/api/bounties?domain=absent.example')).total, 0);
   for (const [query, path] of [
     ['0', '/block/0'],
@@ -398,6 +407,7 @@ test('HTTP mempool pagination, fees, caching and pending transaction enrichment 
   const pending = await api.get(`/api/transactions/${hash(4)}`);
   assert.equal(pending.inputs.items[0].outputType, 2);
   assert.equal(pending.inputs.items[0].domain, 'example.com');
+  assert.equal(pending.inputs.items[0].signatureAlgorithmsMask, 7);
   assert.equal(pending.inputs.items[0].value, '9999999999999999');
   assert.equal(pending.fee, '1');
   assert.equal(pending.height, undefined);

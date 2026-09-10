@@ -124,7 +124,7 @@ export class IndexStore {
     ) {
       this.db.close();
       throw new Error(
-        'Index genesis or chain does not match the current P2C v2 network. Preserve this file and choose a new --database path, or remove the database override to use the genesis-specific default.',
+        'Index genesis or chain does not match the current P2C v2 network (signature-mask reset). Preserve this file and choose a new --database path, or remove the database override to use the genesis-specific default.',
       );
     }
     this.db.prepare('INSERT OR IGNORE INTO metadata(key, value) VALUES (?, ?)').run('network', network);
@@ -142,7 +142,7 @@ export class IndexStore {
     if (!expected.genesis) throw new Error('Mainnet has no operational genesis and is not launched.');
     if (chain !== expected.chain || genesis !== expected.genesis.hash) {
       throw new Error(
-        'RPC chain or genesis does not match the current P2C v2 network. Upgrade the node to the matching chain.',
+        'RPC chain or genesis does not match the current P2C v2 network (signature-mask reset). Upgrade the node to the matching chain.',
       );
     }
     const storedChain = this.metadata('chain');
@@ -369,7 +369,7 @@ export class IndexStore {
     const inputs = new Map(tx.inputs.map((input) => [input.index, input]));
     for (const prev of this.db
       .prepare(
-        `SELECT i.input_index, o.value, o.type, o.address, o.pubkey, o.domain
+        `SELECT i.input_index, o.value, o.type, o.address, o.pubkey, o.domain, o.data
       FROM inputs i JOIN outputs o ON o.txid = i.prev_txid AND o.output_index = i.prev_vout WHERE i.txid = ?`,
       )
       .iterate(txid)) {
@@ -380,6 +380,8 @@ export class IndexStore {
       if (prev.address !== null) input.address = String(prev.address);
       if (prev.pubkey !== null) input.pubkey = String(prev.pubkey);
       if (prev.domain !== null) input.domain = String(prev.domain);
+      const mask = JSON.parse(String(prev.data)).signatureAlgorithmsMask;
+      if (mask !== undefined) input.signatureAlgorithmsMask = mask;
     }
     const outputs = new Map(
       tx.outputs.map((output) => {

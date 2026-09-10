@@ -4,7 +4,7 @@ A self-hosted, read-only explorer backed by a ConnectCoin node's JSON-RPC. Nativ
 
 ## Run on testnet
 
-Requires **Node.js 24+**, npm, and a ConnectCoin node using the **September 9, 2026 P2C v2 chain reset**, with RPC enabled (`server=1`). Only proof version 2 is supported; v1 is rejected. For a complete explorer, the node must retain the full, unpruned chain. A wallet is **not** required.
+Requires **Node.js 24+**, npm, and a ConnectCoin node using the **September 9, 2026 P2C signature-mask chain reset** (Core commit `d4d1ae56aa`), with RPC enabled (`server=1`). Core calls this reset **P2C mask v1**: that is the output-layout revision, not the TLS proof version. Only proof version 2 is supported; proof v1 is rejected. For a complete explorer, the node must retain the full, unpruned chain. A wallet is **not** required.
 
 ```sh
 npm ci
@@ -40,7 +40,7 @@ Run `npm start -- --help` for all options. The explorer now defaults to **testne
 
 Mainnet is **not launched and has no operational genesis**. Its option only exposes its parameters and an unavailable-network warning; it cannot synchronize. The explorer checks both the node's chain name and the exact current genesis, even with an empty index. An old chain with the same name is rejected.
 
-## Updating after the P2C v2 reset
+## Updating after the P2C signature-mask reset
 
 Stop the previous explorer process gracefully, then, from this repository directory:
 
@@ -53,19 +53,19 @@ npm start -- --testnet --host 127.0.0.1 --port 3000
 
 Keep your existing HTTPS reverse proxy pointing to `127.0.0.1:3000`. Restart an existing process supervisor instead of starting a second writer if the explorer is managed as a service. These commands update the explorer, **not the Core node**: the RPC node must also be running the matching reset chain. If it uses a new data directory, pass `--datadir /path/to/new/node-data` or update `CONNECTCOIN_DATADIR`/`CONNECTCOIN_RPC_COOKIE`.
 
-The default index is now `data/<network>-<first-16-genesis-hex>.sqlite`, so the new testnet4 uses `data/testnet4-38cae555fb78f44c.sqlite`. The old `data/testnet4.sqlite` is preserved and is **not imported**. If `--database` or `EXPLORER_DATABASE` selects an old index, startup refuses it: preserve that file and choose a new path, or remove the override to use the new default. Nothing deletes old indexes or wallets. Initial backfill starts at the new genesis; old test balances do not carry over.
+The default index is `data/<network>-<first-16-genesis-hex>.sqlite`, so the current testnet4 uses `data/testnet4-710dc5910cbef402.sqlite`. Both the earlier `data/testnet4.sqlite` and the previous proof-v2-reset index `data/testnet4-38cae555fb78f44c.sqlite` are preserved and **not imported**. If `--database` or `EXPLORER_DATABASE` selects an old index, startup refuses it: preserve that file and choose a new path, or remove the override to use the new default. Nothing deletes old indexes or wallets. Initial backfill starts at the new genesis; old test balances do not carry over.
 
 Current identities are defined together with network defaults in `src/shared/networks.ts`:
 
 | Network  | Current genesis                                                    |
 | -------- | ------------------------------------------------------------------ |
-| Testnet3 | `ca89051d3a1bcf96be2ed4943d347687af47b6fd0a155fc2b15ddcc103bd75af` |
-| Testnet4 | `38cae555fb78f44c31e7d6859d0476252b321dae8b6312afefe0a45fc3fd112a` |
-| Signet   | `2a62fd84425bc1f6dce0343ec3f6c08b782d76df54d52e5e3b8153f5d27d94b4` |
-| Regtest  | `de48ff31cbff58a91ef359100fef13e6472f165e6f0410e52efcdacb1861f65a` |
+| Testnet3 | `1025889d725c5d64c3ee38ab07d2de279ab57036a2482186c65806d6c0291787` |
+| Testnet4 | `710dc5910cbef40216bd82ccfb66af2273b2b1d336b034c5794966904cb603bf` |
+| Signet   | `a694dccdc04a316a4f4fe496f311aff981392f25ea18e4b7f77d9f449b9089fc` |
+| Regtest  | `53c5145452f6957a2674ab904726afc2d7643c4a4fb9c2beab193ea983e500f0` |
 | Mainnet  | None — not launched                                                |
 
-The catalog follows the current Core sources (`src/kernel/chainparams.cpp`, `src/chainparamsbase.cpp`, `src/consensus/{amount,consensus,p2c}.h`, `doc/testnet-beta.md`). Tests independently hash the four serialized genesis headers. Custom signet challenges share the default genesis but can change network magic; catalog fields are explicitly defaults, not a discovery of custom node settings.
+The catalog follows Core commit `d4d1ae56aa` (`src/kernel/chainparams.cpp`, `src/chainparamsbase.cpp`, `src/consensus/{amount,consensus,p2c}.h`, `doc/testnet-beta.md`). Tests independently hash the four serialized genesis headers. Custom signet challenges share the default genesis but can change network magic; catalog fields are explicitly defaults, not a discovery of custom node settings.
 
 ## Explorer views
 
@@ -77,8 +77,8 @@ The header's theme selector offers **System**, **Light** and **Dark**. It follow
 - Search by block height, block/transaction hash, ConnectCoin address or canonical DNS domain.
 - Address history and balances; domain funding, rewards consumed by claims and available outputs.
 - Live node mempool, plus pending-spend information on transaction outputs.
-- P2C bounty catalogue with domain and spent/available filters.
-- TLS proof v2 inspection for P2C spending inputs: handshake messages and their work-hash inclusion, chosen CertificateVerify signature algorithm, challenge binding, work hash/tag/preimage length, TLS transcript digest, target comparison, certificate display metadata and downloadable proof JSON.
+- P2C bounty catalogue with domain and spent/available filters, including the signature algorithms accepted by each output.
+- TLS proof v2 inspection for P2C spending inputs: handshake messages and their work-hash inclusion, chosen CertificateVerify signature algorithm and whether the spent output allows it, challenge binding, work hash/tag/preimage length, TLS transcript digest, target comparison, certificate display metadata and downloadable proof JSON.
 
 Every output displays its numeric type:
 
@@ -87,7 +87,21 @@ output type: 1 (pay-to-public-key)
 output type: 2 (pay-to-connect)
 ```
 
-Type 1 exposes its x-only public key and ConnectCoin address. Type 2 exposes its domain, full copyable work target, root certificates version and approximate expected attempts. There is no invented address or owner for a P2C domain. Unknown numeric types remain explicit rather than being silently treated as P2PK.
+Type 1 exposes its x-only public key and ConnectCoin address. Type 2 exposes its domain, full copyable work target, root certificates version, signature-algorithm mask and approximate expected attempts. There is no invented address or owner for a P2C domain. Unknown numeric types remain explicit rather than being silently treated as P2PK.
+
+### Accepted P2C signature algorithms
+
+Each P2C output carries its own required `signature_algorithms_mask` from Core RPC. The transaction and bounty output cards show this mask in decimal and hexadecimal, followed by **only the algorithms permitted by that output**, using these bits:
+
+|     Mask bit | TLS SignatureScheme | Name                     |
+| -----------: | ------------------- | ------------------------ |
+| `1` (`0x01`) | `0x0403`            | `ecdsa_secp256r1_sha256` |
+| `2` (`0x02`) | `0x0804`            | `rsa_pss_rsae_sha256`    |
+| `4` (`0x04`) | `0x0809`            | `rsa_pss_pss_sha256`     |
+
+Masks combine bits and must be integers from `1` through `7`. For example, mask `6` (`0x06`) accepts the two RSA-PSS schemes but not ECDSA; mask `7` accepts all three. A missing mask is **not** assumed to mean `7`: missing or invalid required RPC data is rejected during output normalization, and a view without mask data cannot claim any accepted algorithms.
+
+The explorer API exposes the value as `TxOutput.signatureAlgorithmsMask` and carries it into resolved spending-input metadata. Proof inspection includes `signatureAlgorithmsMask` and the boolean `signatureSchemeAllowed` when the spent output's mask is available; these fields are omitted when it is unavailable. The comparison checks membership in the output's allowed set, **not** cryptographic validity of the TLS signature.
 
 ## Correctness and data scope
 
@@ -99,7 +113,7 @@ Type 1 exposes its x-only public key and ConnectCoin address. Type 2 exposes its
 
 **Balances and bounties:** totals and catalogue filters cover only the confirmed indexed chain, excluding mempool activity. They can be incomplete during backfill or node synchronization. An address balance includes immature coinbase outputs; it is not a wallet's immediately spendable balance. A domain is a bounty target, not the recipient or owner of the funded value. The wallet's discovery window is not an expiry rule and does not hide older outputs here.
 
-**Proofs:** the decoder accepts **only the domain-only P2C v2 TLS profile** and checks framing, challenge binding and work hash. Versions other than 2 return HTTP 422. The connection work is `TaggedHash("ConnectCoin/P2C/work/v2", ClientHello || ServerHello || EncryptedExtensions || Certificate)`, including those four complete handshake headers. The version byte and **the entire CertificateVerify message** (header, lengths, scheme and signature) are excluded. CertificateVerify remains mandatory for authentication; its selected scheme must be offered by ClientHello and be `0x0403` (`ecdsa_secp256r1_sha256`), `0x0804` (`rsa_pss_rsae_sha256`) or `0x0809` (`rsa_pss_pss_sha256`). These are not the issuer-signature algorithms of the X.509 certificates.
+**Proofs:** the decoder accepts **only the domain-only P2C v2 TLS profile** and checks framing, challenge binding and work hash. Versions other than 2 return HTTP 422. The connection work is `TaggedHash("ConnectCoin/P2C/work/v2", ClientHello || ServerHello || EncryptedExtensions || Certificate)`, including those four complete handshake headers. The version byte and **the entire CertificateVerify message** (header, lengths, scheme and signature) are excluded. CertificateVerify remains mandatory for authentication; its selected scheme must be offered by ClientHello and be `0x0403` (`ecdsa_secp256r1_sha256`), `0x0804` (`rsa_pss_rsae_sha256`) or `0x0809` (`rsa_pss_pss_sha256`). Consensus additionally requires that the spent output's mask allow that scheme; the explorer displays this comparison separately when the mask is known. These are not the issuer-signature algorithms of the X.509 certificates.
 
 The claim challenge deliberately retains the tag `ConnectCoin/P2C/claim/v1`: it hashes the final non-witness transaction ID in internal byte order followed by the little-endian input index. That tag is not legacy proof support. `workHash` is displayed in reversed uint256/RPC byte order; `transcriptHash` is the ordinary SHA-256 digest over the same four messages, in TLS byte order.
 
@@ -129,6 +143,6 @@ npm run build
 npm run format:check
 ```
 
-The development command accepts the same network, RPC and database options as `npm start`. Tests use local fixture RPC servers and temporary SQLite files; they do not connect to or modify a wallet. Coverage includes monetary precision, typed outputs, v2-only proof framing/hash checks and CertificateVerify exclusion, RPC authentication/errors/large responses, API routes, pagination, current genesis headers/network selection, legacy-index rejection without deletion, restart/reorg rollback and HTTP startup/shutdown races.
+The development command accepts the same network, RPC and database options as `npm start`. Tests use local fixture RPC servers and temporary SQLite files; they do not connect to or modify a wallet. Coverage includes monetary precision, typed outputs and their signature masks, v2-only proof framing/hash checks and CertificateVerify exclusion, per-output signature-scheme comparisons, RPC authentication/errors/large responses, API routes, pagination, current genesis headers/network selection, legacy-index rejection without deletion, restart/reorg rollback and HTTP startup/shutdown races.
 
 Source layout: `src/server` contains RPC, indexing, proof decoding and HTTP routes; `src/shared` contains the API model; `src/client` contains the React interface. Vite builds the frontend into `dist/client`, and TypeScript builds the backend into `dist/server`.

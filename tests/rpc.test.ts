@@ -218,6 +218,7 @@ const txFixture = () => ({
         domain: 'example.com',
         connection_work_target: 'f'.repeat(64),
         root_certificates_version: '1',
+        signature_algorithms_mask: '6',
       },
     },
   ],
@@ -230,6 +231,7 @@ const txFixture = () => ({
       domain: 'example.com',
       connection_work_target: '0'.repeat(63) + 'f',
       root_certificates_version: '1',
+      signature_algorithms_mask: '7',
       scriptPubKey: { type: 'nonstandard' },
     },
   ],
@@ -255,9 +257,11 @@ test('normalization uses typed output numbers, preserves all connects and P2C me
     domain: 'example.com',
     target: '0'.repeat(63) + 'f',
     rootsVersion: 1,
+    signatureAlgorithmsMask: 7,
   });
   assert.equal(tx.inputs[0].outputType, 2);
   assert.equal(tx.inputs[0].domain, 'example.com');
+  assert.equal(tx.inputs[0].signatureAlgorithmsMask, 6);
   assert.equal(tx.inputs[0].value, '120000000000');
   assert.deepEqual(tx.inputs[0].witness, ['010203']);
   assert.equal(tx.fee, '1');
@@ -275,6 +279,25 @@ test('normalization preserves supplied address and does not fabricate unavailabl
   assert.equal(tx.fee, undefined);
   assert.equal(tx.inputs[0].coinbase, '0100');
   assert.equal(tx.inputs[0].txid, undefined);
+});
+
+test('RPC output masks are mandatory integers from 1 through 7, never defaulted to all algorithms', () => {
+  for (let mask = 1; mask <= 7; mask++) {
+    const raw: any = txFixture();
+    raw.vout[1].signature_algorithms_mask = String(mask);
+    raw.vin[0].prevout.signature_algorithms_mask = mask;
+    const tx = normalizeTransaction(raw, 'testnet4');
+    assert.equal(tx.outputs[1].signatureAlgorithmsMask, mask);
+    assert.equal(tx.inputs[0].signatureAlgorithmsMask, mask);
+    assert.equal(tx.outputs[0].signatureAlgorithmsMask, undefined);
+  }
+  for (const mask of [undefined, null, 0, 8, 255, -1, 1.5, true, '', '7x']) {
+    for (const prevout of [false, true]) {
+      const raw: any = txFixture();
+      (prevout ? raw.vin[0].prevout : raw.vout[1]).signature_algorithms_mask = mask;
+      assert.throws(() => normalizeTransaction(raw, 'testnet4'), /P2C signature algorithms mask/);
+    }
+  }
 });
 
 test('block normalization accepts RPC integer strings and exact difficulty', () => {

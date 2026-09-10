@@ -17,6 +17,7 @@ const bountyOutput = (value: string, n = 0, domain = 'example.com') => ({
   domain,
   connection_work_target: '0'.repeat(63) + 'f',
   root_certificates_version: '1',
+  signature_algorithms_mask: '6',
 });
 function transaction(id: number, outputs: any[], inputs?: any[]) {
   return {
@@ -106,6 +107,7 @@ test('indexes typed outputs, exact amounts, witnesses, prevouts, spends and acco
     assert.equal(tx.outputs[1].type, 2);
     assert.equal(tx.outputs[1].value, '59999999999');
     assert.equal(tx.outputs[1].domain, 'example.com');
+    assert.equal(tx.outputs[1].signatureAlgorithmsMask, 6);
     assert.equal(tx.inputs[0].value, '150000000000');
     assert.equal(tx.inputs[0].outputType, 1);
     assert.equal(tx.fee, '1');
@@ -114,6 +116,7 @@ test('indexes typed outputs, exact amounts, witnesses, prevouts, spends and acco
     const spent = store.getTransaction(hash(4))!;
     assert.equal(spent.inputs[0].domain, 'example.com');
     assert.equal(spent.inputs[0].outputType, 2);
+    assert.equal(spent.inputs[0].signatureAlgorithmsMask, 6);
     assert.deepEqual(spent.inputs[0].witness, ['aa', 'bb', 'cc']);
     assert.equal(spent.fee, '1');
     const account = store.account('domain', 'EXAMPLE.COM.', 1, 10);
@@ -229,6 +232,11 @@ test('restart resumes in bounded batches and refuses mismatched genesis or netwo
     assert.equal((await store.sync(rpc, 1)).height, 1);
     assert.equal((await store.sync(rpc, 1)).height, 2);
     assert.equal((await store.sync(rpc)).indexedBlocks, 0);
+    store.close();
+    store = new IndexStore(path, 'testnet4');
+    assert.equal(store.getTransaction(hash(2))!.outputs[1].signatureAlgorithmsMask, 6);
+    assert.equal(store.getTransaction(hash(4))!.inputs[0].signatureAlgorithmsMask, 6);
+    assert.equal(store.bounties(1, 10, { state: 'all' }).items[0].signatureAlgorithmsMask, 6);
     assert.throws(() => store!.bindNetwork('testnet4', hash(999)), /does not match/);
     assert.throws(() => store!.bindNetwork('main', hash(100)), /does not match/);
     const foreign = block(0, 999, [transaction(999, [keyOutput('15')])]);

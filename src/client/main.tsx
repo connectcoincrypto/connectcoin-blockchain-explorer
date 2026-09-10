@@ -48,6 +48,7 @@ import { outputPath } from '../shared/links';
 import { NETWORKS, PROTOCOL } from '../shared/networks';
 import type { DecodedP2CProof } from '../server/proof';
 import { ThemePicker } from './ThemePicker';
+import { P2CSignatureAlgorithms } from './P2CSignatureAlgorithms';
 import './style.css';
 
 function useApi<T>(url: string, interval = 0) {
@@ -703,7 +704,7 @@ function NetworkDetails({ status }: { status: ExplorerStatus }) {
     <Panel title="Network parameters · P2C v2">
       <div className="proof-content">
         <p className="muted small">
-          Current Core defaults · reset September 9, 2026. Live chain data comes from the node.
+          Current Core defaults · signature-mask reset September 9, 2026. Live chain data comes from the node.
           {network.testChain
             ? ' Test coins have no promised mainnet conversion.'
             : ' Mainnet is not launched.'}
@@ -936,6 +937,7 @@ function OutputCard({
             <span>Root certificates version</span>
             <strong>{o.rootsVersion ?? '—'}</strong>
           </div>
+          <P2CSignatureAlgorithms mask={o.signatureAlgorithmsMask} />
         </>
       )}
       <div className="output-footer">
@@ -1163,6 +1165,15 @@ function ProofPanel({ txid, index, onClose }: { txid: string; index: number; onC
                 {p.meetsTarget ? 'Work target met' : 'Work target not met'}
               </Badge>
             )}
+            {p.signatureSchemeAllowed !== undefined ? (
+              <Badge tone={p.signatureSchemeAllowed ? 'success' : 'warn'}>
+                {p.signatureSchemeAllowed
+                  ? 'Signature algorithm allowed by output'
+                  : 'Signature algorithm not allowed by output'}
+              </Badge>
+            ) : (
+              <Badge>Output signature policy unavailable</Badge>
+            )}
             <button className="button secondary" onClick={download}>
               <Download size={15} />
               Download JSON
@@ -1183,6 +1194,7 @@ function ProofPanel({ txid, index, onClose }: { txid: string; index: number; onC
               </Field>
               <Field label="Work hash tag">{p.workHashTag}</Field>
               <Field label="Work preimage size">{bytes(p.workPreimageByteLength)}</Field>
+              <Field label="Spent output signature mask">{p.signatureAlgorithmsMask ?? 'Unavailable'}</Field>
             </div>
             <Field label="Work hash">
               <HashValue value={p.workHash} full />

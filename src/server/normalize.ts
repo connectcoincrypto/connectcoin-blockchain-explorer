@@ -1,6 +1,7 @@
 import { bech32m } from 'bech32';
 import type { BlockSummary, Network, Transaction, TxInput, TxOutput } from '../shared/types.js';
 import { NETWORKS } from '../shared/networks.js';
+import { isValidP2CSignatureMask } from '../shared/p2c-signatures.js';
 
 export function safeInteger(value: unknown, field = 'integer'): number {
   if (typeof value !== 'number' && (typeof value !== 'string' || !/^-?\d+$/.test(value))) {
@@ -65,6 +66,10 @@ function outputFields(raw: any, network: Network): Omit<TxOutput, 'index'> {
     output.domain = raw.domain;
     output.target = hex(raw.connection_work_target, 'P2C work target');
     output.rootsVersion = safeInteger(raw.root_certificates_version, 'P2C root version');
+    const mask = safeInteger(raw.signature_algorithms_mask, 'P2C signature algorithms mask');
+    if (!isValidP2CSignatureMask(mask))
+      throw new Error('The node returned an invalid P2C signature algorithms mask (expected 1 through 7).');
+    output.signatureAlgorithmsMask = mask;
   }
   return output;
 }
@@ -100,6 +105,8 @@ export function normalizeTransaction(
       if (previous.address) normalized.address = previous.address;
       if (previous.pubkey) normalized.pubkey = previous.pubkey;
       if (previous.domain) normalized.domain = previous.domain;
+      if (previous.signatureAlgorithmsMask !== undefined)
+        normalized.signatureAlgorithmsMask = previous.signatureAlgorithmsMask;
     }
     return normalized;
   });

@@ -369,3 +369,21 @@ test('excluded CertificateVerify remains mandatory and strictly framed', () => {
   assert.throws(() => decode(proof(malformed)), /size limit/);
   assert.throws(() => decode(proof([...fixture(), handshake(20, Buffer.alloc(32))])), /Trailing bytes/);
 });
+
+test('proof inspection compares the selected scheme against the output mask, not every offered scheme', () => {
+  for (const scheme of [0x0403, 0x0804, 0x0809]) {
+    const bytes = proof(fixture({ certificateScheme: scheme, clientSignatures: [0x0403, 0x0804, 0x0809] }));
+    const result = decodeP2CProof(bytes.toString('hex'), TXID, 7, undefined, 6);
+    assert.equal(result.signatureAlgorithmsMask, 6);
+    assert.equal(result.signatureSchemeAllowed, scheme !== 0x0403);
+    assert.equal(result.workHash, decode(bytes).workHash);
+  }
+  const unknown = decode(proof());
+  assert.equal('signatureAlgorithmsMask' in unknown, false);
+  assert.equal('signatureSchemeAllowed' in unknown, false);
+  for (const mask of [0, 8, 255, -1, 1.5, null, '7'])
+    assert.throws(
+      () => decodeP2CProof(proof().toString('hex'), TXID, 7, undefined, mask as number),
+      /signature algorithms mask/,
+    );
+});

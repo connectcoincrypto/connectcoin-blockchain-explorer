@@ -1,4 +1,9 @@
 import { createHash, X509Certificate } from 'node:crypto';
+import {
+  P2C_SIGNATURE_ALGORITHMS,
+  isValidP2CSignatureMask,
+  isP2CSignatureSchemeAllowed,
+} from '../shared/p2c-signatures.js';
 
 export interface DecodedP2CProof {
   version: number;
@@ -27,6 +32,8 @@ export interface DecodedP2CProof {
   }[];
   cipherSuite: { code: number; name: string };
   signatureScheme: { code: number; name: string };
+  signatureAlgorithmsMask?: number;
+  signatureSchemeAllowed?: boolean;
   rawHex: string;
   validationScope: string;
 }
@@ -42,11 +49,9 @@ const CIPHERS: Record<number, string> = {
   0x1301: 'TLS_AES_128_GCM_SHA256',
   0x1303: 'TLS_CHACHA20_POLY1305_SHA256',
 };
-const SIGNATURES: Record<number, string> = {
-  0x0403: 'ecdsa_secp256r1_sha256',
-  0x0804: 'rsa_pss_rsae_sha256',
-  0x0809: 'rsa_pss_pss_sha256',
-};
+const SIGNATURES: Record<number, string> = Object.fromEntries(
+  P2C_SIGNATURE_ALGORITHMS.map((algorithm) => [algorithm.code, algorithm.name]),
+);
 const HELLO_RETRY_RANDOM = 'cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c';
 const WORK_HASH_TAG = 'ConnectCoin/P2C/work/v2';
 
@@ -249,7 +254,13 @@ export function decodeP2CProof(
   txid: string,
   inputIndex: number,
   target?: string,
+  signatureAlgorithmsMask?: number,
 ): DecodedP2CProof {
+  if (signatureAlgorithmsMask !== undefined)
+    requireCondition(
+      isValidP2CSignatureMask(signatureAlgorithmsMask),
+      'Invalid P2C signature algorithms mask',
+    );
   requireCondition(
     typeof proofHex === 'string' && proofHex.length > 0 && proofHex.length <= 64 * 1024 * 2,
     'Invalid P2C proof size (maximum 64 KiB)',
@@ -337,8 +348,14 @@ export function decodeP2CProof(
     certificates,
     cipherSuite: { code: cipher, name: CIPHERS[cipher] },
     signatureScheme: { code: scheme, name: SIGNATURES[scheme] },
+    ...(signatureAlgorithmsMask === undefined
+      ? {}
+      : {
+          signatureAlgorithmsMask,
+          signatureSchemeAllowed: isP2CSignatureSchemeAllowed(signatureAlgorithmsMask, scheme),
+        }),
     rawHex: bytes.toString('hex'),
     validationScope:
-      'Display checks only: P2C v2 TLS structure, claim challenge and work target. CertificateVerify is mandatory but its signature is not verified here. Certificate-chain signatures, chain trust, median-time validity, spent-output domain binding and consensus validity are not verified here; the node validates transactions.',
+      'Display checks only: P2C v2 TLS structure, claim challenge and, when the previous output is known, work target and allowed signature scheme. CertificateVerify is mandatory but its signature is not verified here. Certificate-chain signatures, chain trust, median-time validity, spent-output domain binding and consensus validity are not verified here; the node validates transactions.',
   };
 }

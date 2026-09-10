@@ -855,6 +855,23 @@ dl {
   font-size: 0.77rem;
   min-width: 0;
 }
+.p2c-signature-list {
+  list-style: none;
+  margin: 6px 0 12px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.p2c-signature-list li {
+  display: grid;
+  gap: 3px;
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+.p2c-signature-list .mono {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
 .output-property > span:first-child {
   color: #89957c;
 }

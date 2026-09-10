@@ -15,6 +15,7 @@ export interface TxInput {
   address?: string;
   pubkey?: string;
   domain?: string;
+  signatureAlgorithmsMask?: number;
   witness?: string[];
 }
 export interface TxOutput {
@@ -26,6 +27,7 @@ export interface TxOutput {
   domain?: string;
   target?: string;
   rootsVersion?: number;
+  signatureAlgorithmsMask?: number;
   spent?: { txid: string; inputIndex: number; confirmed: boolean };
 }
 export interface Transaction {

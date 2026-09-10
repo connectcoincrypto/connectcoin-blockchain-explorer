@@ -111,7 +111,7 @@ async function poll() {
         error?.message === 'MAINNET_UNLAUNCHED'
           ? 'Mainnet is not launched and has no operational genesis. Use --testnet for the current P2C v2 beta.'
           : mismatch
-            ? 'The node chain or genesis does not match the current P2C v2 network. Upgrade the node to the reset chain and check --network/--datadir. Old-chain data is not imported.'
+            ? 'The node chain or genesis does not match the current signature-mask reset (P2C proof v2). Upgrade the node to the reset chain and check --network/--datadir. Old-chain data is not imported.'
             : /prun/i.test(error?.message ?? '')
               ? 'A full history requires an unpruned node. Restore the missing blocks before indexing.'
               : 'Node RPC is unavailable. Check the RPC URL, authentication and that the node was started with server=1.',
