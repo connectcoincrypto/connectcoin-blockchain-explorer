@@ -65,6 +65,7 @@ function summary(row: TxRow): TransactionSummary {
 export class IndexStore {
   private readonly db: DatabaseSync;
   private syncing = false;
+  private revision = 0;
 
   constructor(
     path: string,
@@ -176,6 +177,11 @@ export class IndexStore {
       .get() as unknown as Tip | undefined;
   }
 
+  /** Changes only after a canonical-chain batch or rollback commits successfully. */
+  getRevision(): number {
+    return this.revision;
+  }
+
   /** Fetch first, then commit the entire batch and any rollback atomically. */
   async sync(rpc: Rpc, limit = 25): Promise<{ height: number; nodeHeight: number; indexedBlocks: number }> {
     if (this.syncing) throw new Error('Index synchronization is already running.');
@@ -283,6 +289,7 @@ export class IndexStore {
           this.db.prepare('DELETE FROM blocks WHERE height > ?').run(ancestor);
           for (const block of pending) this.insertBlock(block);
         });
+        this.revision++;
       }
       return { height: this.getTip()?.height ?? -1, nodeHeight, indexedBlocks: pending.length };
     } finally {

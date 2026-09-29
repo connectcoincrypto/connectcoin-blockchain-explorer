@@ -43,12 +43,31 @@ export function createApp(runtime: Runtime) {
   const pendingRequests = new Set<Promise<unknown>>();
   const asyncRoute =
     (
-      handler: (req: express.Request<Record<string, string>>, res: express.Response) => Promise<unknown>,
+      handler: (req: express.Request<Record<string, string>>) => Promise<unknown>,
     ): express.RequestHandler<Record<string, string>> =>
     (req, res, next) => {
       // Track handler completion, not the socket: clients can disconnect while an
       // RPC call is pending and the resumed handler may still read the database.
-      const work = Promise.resolve().then(() => handler(req, res));
+      const work = Promise.resolve().then(async () => {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const revision = store.getRevision();
+          try {
+            const body = await handler(req);
+            if (revision !== store.getRevision()) continue;
+            // No await between the final snapshot check and sending the response.
+            // Re-read the entire transaction on change: its block, witness and
+            // confirmed spend state may all differ after a reorganization.
+            res.json(body);
+            return;
+          } catch (error) {
+            if (revision !== store.getRevision()) continue;
+            // Dispatch errors at the same boundary too, including stale 404/422s.
+            next(error);
+            return;
+          }
+        }
+        next(new HttpError(503, 'The indexed chain changed during this request. Please retry.'));
+      });
       pendingRequests.add(work);
       void work.then(
         () => pendingRequests.delete(work),
@@ -76,22 +95,24 @@ export function createApp(runtime: Runtime) {
       return res.status(405).json({ error: 'This explorer API is read-only.' });
     next();
   });
-  let poolCache: { data: Record<string, any>; time: number } | undefined;
-  let poolPending: Promise<Record<string, any>> | undefined;
+  let poolCache: { data: Record<string, any>; time: number; revision: number } | undefined;
+  let poolPending: { promise: Promise<Record<string, any>>; revision: number } | undefined;
   async function mempool(): Promise<Record<string, any>> {
     if (!status.connected) throw new HttpError(503, 'Node RPC is unavailable.');
-    if (poolCache && Date.now() - poolCache.time < 5000) return poolCache.data;
-    if (!poolPending)
-      poolPending = rpc
-        .call<Record<string, any>>('getrawmempool', [true])
-        .then((data) => {
-          poolCache = { data, time: Date.now() };
-          return data;
-        })
-        .finally(() => {
-          poolPending = undefined;
-        });
-    return poolPending;
+    const revision = store.getRevision();
+    if (poolCache?.revision === revision && Date.now() - poolCache.time < 5000) return poolCache.data;
+    if (poolPending?.revision === revision) return poolPending.promise;
+    const promise = rpc.call<Record<string, any>>('getrawmempool', [true]);
+    const pending = { promise, revision };
+    poolPending = pending;
+    try {
+      const data = await promise;
+      if (revision === store.getRevision()) poolCache = { data, time: Date.now(), revision };
+      return data;
+    } finally {
+      // An older request must not clear a new post-reorg request's cache slot.
+      if (poolPending === pending) poolPending = undefined;
+    }
   }
   async function transaction(txid: string): Promise<Transaction | undefined> {
     const indexed = store.getTransaction(txid);
@@ -99,16 +120,18 @@ export function createApp(runtime: Runtime) {
     if (!status.connected) return undefined;
     try {
       const raw = await rpc.call<any>('getrawtransaction', [txid, 2]);
-      if (raw.in_active_chain === false || (raw.blockhash && Number(raw.confirmations ?? 0) <= 0))
+      if (raw.in_active_chain === false || (raw.blockhash && !(Number(raw.confirmations) > 0)))
         return undefined;
       const tx = normalizeTransaction(raw, config.network);
       // Block context is unavailable until indexed; do not mislabel a confirmed transaction as mempool.
-      if (raw.blockhash) tx.blockHash = raw.blockhash;
+      // Only the current index supplies the height used for confirmation counts.
+      delete tx.height;
       if (!tx.blockHash) {
-        const pool = await mempool();
-        if (!pool[txid]) return undefined;
-        tx.fee = decimalToAtomic(pool[txid].fees.base);
-        tx.time = Number(pool[txid].time);
+        // A detached transaction is pending only if Core actually readmitted it.
+        // Never infer that from orphan storage or the cached mempool list.
+        const entry = await rpc.call<any>('getmempoolentry', [txid]);
+        tx.fee = decimalToAtomic(entry.fees.base);
+        tx.time = Number(entry.time);
       }
       return tx;
     } catch (error: any) {
@@ -193,12 +216,12 @@ export function createApp(runtime: Runtime) {
     if (!result) throw new HttpError(404, 'Block not found in the current indexed chain.');
     res.json({
       ...result,
-      confirmations: Math.max(0, (status.nodeHeight ?? store.overview().height) - result.block.height + 1),
+      confirmations: Math.max(0, (store.getTip()?.height ?? -1) - result.block.height + 1),
     });
   });
   app.get(
     '/api/transactions/:id',
-    asyncRoute(async (req, res) => {
+    asyncRoute(async (req) => {
       const tx = await transaction(requireHash(req.params.id));
       if (!tx) throw new HttpError(404, 'Transaction not found. It may not be indexed yet.');
       const inputsPage = pageNumber(req.query.inputsPage),
@@ -214,21 +237,19 @@ export function createApp(runtime: Runtime) {
         tx.outputs.slice((outputsPage - 1) * 20, outputsPage * 20),
       );
       const { inputs: _inputs, outputs: _outputs, ...summary } = tx;
-      res.json({
+      return {
         ...summary,
         totalOutput: tx.outputs.reduce((s, o) => s + BigInt(o.value), 0n).toString(),
         confirmations:
-          tx.height !== undefined
-            ? Math.max(0, (status.nodeHeight ?? store.overview().height) - tx.height + 1)
-            : undefined,
+          tx.height !== undefined ? Math.max(0, (store.getTip()?.height ?? -1) - tx.height + 1) : undefined,
         inputs: { items: inputs, total: tx.inputs.length, page: inputsPage, pageSize: 20 },
         outputs: { items: outputs, total: tx.outputs.length, page: outputsPage, pageSize: 20 },
-      });
+      };
     }),
   );
   app.get(
     '/api/transactions/:id/proof/:input',
-    asyncRoute(async (req, res) => {
+    asyncRoute(async (req) => {
       const tx = await transaction(requireHash(req.params.id));
       if (!tx) throw new HttpError(404, 'Transaction not found.');
       if (!/^\d+$/.test(req.params.input)) throw new HttpError(400, 'Invalid input index.');
@@ -239,14 +260,12 @@ export function createApp(runtime: Runtime) {
         throw new HttpError(404, 'No P2C proof on this input.');
       const previous = input.txid ? (await parentTransaction(input.txid))?.outputs[input.vout!] : undefined;
       try {
-        res.json(
-          decodeP2CProof(
-            input.witness[0],
-            tx.txid,
-            index,
-            previous?.target,
-            previous?.signatureAlgorithmsMask ?? input.signatureAlgorithmsMask,
-          ),
+        return decodeP2CProof(
+          input.witness[0],
+          tx.txid,
+          index,
+          previous?.target,
+          previous?.signatureAlgorithmsMask ?? input.signatureAlgorithmsMask,
         );
       } catch {
         throw new HttpError(
@@ -258,11 +277,11 @@ export function createApp(runtime: Runtime) {
   );
   app.get(
     '/api/mempool',
-    asyncRoute(async (req, res) => {
+    asyncRoute(async (req) => {
       const pool = await mempool();
       const page = pageNumber(req.query.page);
       const sorted = Object.entries(pool).sort((a, b) => Number(b[1].time) - Number(a[1].time));
-      res.json({
+      return {
         page,
         pageSize: 20,
         total: sorted.length,
@@ -274,12 +293,12 @@ export function createApp(runtime: Runtime) {
           fee: decimalToAtomic(tx.fees.base),
           depends: tx.depends.length,
         })),
-      });
+      };
     }),
   );
   app.get(
     '/api/address/:address',
-    asyncRoute(async (req, res) => {
+    asyncRoute(async (req) => {
       const address = req.params.address;
       if (!/^(cc|tcc|ccrt)1[a-z0-9]{20,100}$/.test(address))
         throw new HttpError(400, 'Invalid ConnectCoin address.');
@@ -296,7 +315,7 @@ export function createApp(runtime: Runtime) {
       } catch {
         throw new HttpError(400, 'Invalid address or wrong network.');
       }
-      res.json(store.account('address', address, pageNumber(req.query.page), 20));
+      return store.account('address', address, pageNumber(req.query.page), 20);
     }),
   );
   app.get('/api/domain/:domain', (req, res) => {
@@ -319,20 +338,19 @@ export function createApp(runtime: Runtime) {
   });
   app.get(
     '/api/search',
-    asyncRoute(async (req, res) => {
+    asyncRoute(async (req) => {
       const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
       if (!q || q.length > 256) throw new HttpError(400, 'Enter a block height, hash, address or domain.');
-      if (/^\d{1,10}$/.test(q)) return res.json({ path: `/block/${q}` });
+      if (/^\d{1,10}$/.test(q)) return { path: `/block/${q}` };
       if (hash(q)) {
         const id = q.toLowerCase();
-        if (store.getBlock(id, 1, 1)) return res.json({ path: `/block/${id}` });
-        if (await transaction(id)) return res.json({ path: `/tx/${id}` });
+        if (store.getBlock(id, 1, 1)) return { path: `/block/${id}` };
+        if (await transaction(id)) return { path: `/tx/${id}` };
         throw new HttpError(404, 'No indexed block or known transaction matches this hash.');
       }
-      if (/^(cc|tcc|ccrt)1/i.test(q))
-        return res.json({ path: `/address/${encodeURIComponent(q.toLowerCase())}` });
+      if (/^(cc|tcc|ccrt)1/i.test(q)) return { path: `/address/${encodeURIComponent(q.toLowerCase())}` };
       if (domain(q.toLowerCase()) && q.includes('.'))
-        return res.json({ path: `/domain/${encodeURIComponent(q.toLowerCase())}` });
+        return { path: `/domain/${encodeURIComponent(q.toLowerCase())}` };
       throw new HttpError(
         400,
         'Enter a block height, transaction/block hash, ConnectCoin address or DNS domain.',

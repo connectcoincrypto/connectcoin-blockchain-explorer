@@ -205,6 +205,11 @@ class MockRpc {
       return structuredClone(found) as T;
     }
     if (method === 'getrawmempool') return structuredClone(this.pool) as T;
+    if (method === 'getmempoolentry') {
+      const found = this.pool[String(params[0])];
+      if (!found) throw Object.assign(new Error('Transaction not in mempool'), { code: -5 });
+      return structuredClone(found) as T;
+    }
     if (method === 'gettxspendingprevout')
       return (params[0] as { txid: string; vout: number }[]).map((prevout) => ({
         ...prevout,
@@ -364,6 +369,39 @@ test('HTTP proof endpoint decodes the selected P2C witness and distinguishes mis
   await api.get(`/api/transactions/${hash(2)}/proof/-1`, 400);
 });
 
+test('HTTP confirmation counts use the indexed tip rather than an ahead or stale node height', async (t) => {
+  const api = await setup(t);
+  for (const nodeHeight of [100, 0]) {
+    api.status.nodeHeight = nodeHeight;
+    assert.equal((await api.get('/api/blocks/0')).confirmations, 2);
+    assert.equal((await api.get('/api/blocks/1')).confirmations, 1);
+    assert.equal((await api.get(`/api/transactions/${hash(1)}`)).confirmations, 2);
+    assert.equal((await api.get(`/api/transactions/${hash(2)}`)).confirmations, 1);
+  }
+  api.rpc.raw.get(hash(7)).height = '2';
+  const unindexed = await api.get(`/api/transactions/${hash(7)}`);
+  assert.equal(unindexed.blockHash, hash(102));
+  assert.equal(unindexed.height, undefined);
+  assert.equal(unindexed.confirmations, undefined);
+});
+
+test('HTTP rejects orphan or malformed RPC block confirmations', async (t) => {
+  const api = await setup(t);
+  for (const confirmations of [undefined, 'not-a-number', '0', '-1']) {
+    api.rpc.raw.get(hash(7)).confirmations = confirmations;
+    await api.get(`/api/transactions/${hash(7)}`, 404);
+  }
+});
+
+test('HTTP transaction membership does not rely on a previously cached mempool list', async (t) => {
+  const api = await setup(t);
+  await api.get('/api/mempool');
+  delete api.rpc.pool[hash(4)];
+  await api.get(`/api/transactions/${hash(4)}`, 404);
+  await api.get(`/api/transactions/${hash(4)}/proof/0`, 404);
+  assert.equal(api.rpc.calls.filter((call) => call.method === 'getmempoolentry').length, 2);
+});
+
 test('HTTP address/domain accounts, bounty filters and search reflect confirmed history', async (t) => {
   const api = await setup(t);
   const address = api.store.getTransaction(hash(1))!.outputs[0].address!;
@@ -420,7 +458,7 @@ test('HTTP mempool pagination, fees, caching and pending transaction enrichment 
   assert.equal((await api.get(`/api/transactions/${hash(7)}`)).blockHash, hash(102));
   assert.ok(
     api.rpc.calls.every((call) =>
-      ['getrawmempool', 'getrawtransaction', 'gettxspendingprevout'].includes(call.method),
+      ['getrawmempool', 'getmempoolentry', 'getrawtransaction', 'gettxspendingprevout'].includes(call.method),
     ),
   );
   api.status.connected = false;

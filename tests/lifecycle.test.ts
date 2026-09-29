@@ -178,6 +178,9 @@ test('an aborted client does not let shutdown close the database before its asyn
   let databaseOpen = true;
   let databaseOpenWhenHandlerResumed: boolean | undefined;
   const store = {
+    getRevision() {
+      return 0;
+    },
     getTransaction() {
       return {
         txid,
@@ -186,10 +189,10 @@ test('an aborted client does not let shutdown close the database before its asyn
         outputs: [{ index: 0, type: 1, value: '100' }],
       };
     },
-    overview() {
+    getTip() {
       databaseOpenWhenHandlerResumed = databaseOpen;
       handlerReadDatabase.resolve();
-      return { height: 1 };
+      return { height: 1, hash: 'b'.repeat(64) };
     },
   } as unknown as IndexStore;
   const rpc = {

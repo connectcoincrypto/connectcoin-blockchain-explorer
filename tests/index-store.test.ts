@@ -96,6 +96,31 @@ function chain() {
   return [genesis, first, second];
 }
 
+test('revision advances only for committed canonical-chain changes', async () => {
+  const store = new IndexStore(':memory:', 'testnet4');
+  const rpc = new MockRpc(chain());
+  try {
+    assert.equal(store.getRevision(), 0);
+    store.bindNetwork('testnet4', NETWORKS.testnet4.genesis!.hash);
+    assert.equal(store.getRevision(), 0);
+    await store.sync(rpc, 1);
+    assert.equal(store.getRevision(), 1);
+    await store.sync(rpc);
+    assert.equal(store.getRevision(), 2);
+    await store.sync(rpc);
+    assert.equal(store.getRevision(), 2);
+    store.bindNetwork('testnet4', NETWORKS.testnet4.genesis!.hash);
+    assert.equal(store.getRevision(), 2);
+    rpc.blocks = rpc.blocks.slice(0, 2);
+    assert.equal((await store.sync(rpc)).indexedBlocks, 0);
+    assert.equal(store.getRevision(), 3, 'a rollback without replacement blocks changes the chain');
+    await store.sync(rpc);
+    assert.equal(store.getRevision(), 3);
+  } finally {
+    store.close();
+  }
+});
+
 test('indexes typed outputs, exact amounts, witnesses, prevouts, spends and account history', async () => {
   const store = new IndexStore(':memory:', 'testnet4');
   try {
@@ -151,6 +176,7 @@ test('reorg removes orphaned spends, transactions and bounties, including a shor
   const rpc = new MockRpc(original);
   try {
     await store.sync(rpc);
+    const address = store.getTransaction(hash(2))!.outputs[0].address!;
     const replacement = block(
       2,
       202,
@@ -160,21 +186,96 @@ test('reorg removes orphaned spends, transactions and bounties, including a shor
     rpc.blocks = [original[0], original[1], replacement];
     await store.sync(rpc);
     assert.equal(store.getTransaction(hash(4)), undefined);
+    assert.equal(store.getTransaction(hash(5)), undefined);
     assert.equal(store.getBlock(hash(102), 1, 10), undefined);
     assert.equal(store.getTransaction(hash(2))!.outputs[1].spent, undefined);
     assert.equal(store.overview().availableBountyCount, 2);
     assert.equal(store.overview().availableBountyValue, '89999999999');
+    assert.deepEqual(
+      store.listBlocks(1, 10).items.map((item) => item.hash),
+      [replacement.hash, original[1].hash, original[0].hash],
+    );
+    const domain = store.account('domain', 'example.com', 1, 10);
+    assert.equal(domain.totalSent, '0');
+    assert.equal(domain.balance, '59999999999');
+    assert.deepEqual(
+      domain.transactions.items.map((item) => item.txid),
+      [hash(2)],
+    );
+    const account = store.account('address', address, 1, 10);
+    assert.equal(account.totalReceived, '390000000000');
+    assert.equal(account.totalSent, '150000000000');
+    assert.equal(account.balance, '240000000000');
+    assert.deepEqual(
+      account.transactions.items.map((item) => item.txid),
+      [hash(2), hash(3), hash(1)],
+    );
+    assert.equal(store.bounties(1, 10, { state: 'spent' }).total, 0);
     assert.equal(store.getBlock('1', 1, 10)!.block.nextHash, hash(202));
     rpc.blocks = original.slice(0, 2);
     assert.deepEqual(await store.sync(rpc), { height: 1, nodeHeight: 1, indexedBlocks: 0 });
     assert.equal(store.getTransaction(hash(6)), undefined);
+    assert.equal(store.getBlock(replacement.hash, 1, 10), undefined);
     assert.equal(store.account('domain', 'another.example', 1, 10).transactions.total, 0);
+    assert.equal(store.account('domain', 'another.example', 1, 10).totalReceived, '0');
+    assert.equal(store.bounties(1, 10, { domain: 'another.example', state: 'all' }).total, 0);
     assert.equal(store.getBlock('1', 1, 10)!.block.nextHash, undefined);
     assert.equal(store.bounties(1, 10).items[0].txid, hash(2));
   } finally {
     store.close();
   }
 });
+
+for (const height of [2, 3]) {
+  test(`a re-included transaction is replaced with its canonical block and witness at height ${height}`, async () => {
+    const store = new IndexStore(':memory:', 'testnet4');
+    const original = chain();
+    const rpc = new MockRpc(original);
+    try {
+      await store.sync(rpc);
+      const redemption = structuredClone(original[2].tx[1]);
+      redemption.hash = hash(20004);
+      redemption.vin[0].txinwitness = ['dd', 'ee', 'ff'];
+      // A decoded RPC transaction may carry stale context; the containing block wins.
+      redemption.blockhash = original[2].hash;
+      redemption.height = '2';
+      redemption.blocktime = original[2].time;
+      const fork = [original[0], original[1]];
+      if (height === 3) fork.push(block(2, 202, [transaction(6, [keyOutput('15')])], fork[1]));
+      const replacement = block(height, 200 + height, [redemption], fork.at(-1));
+      replacement.time = '1800000000';
+      fork.push(replacement);
+      rpc.blocks = fork;
+      await store.sync(rpc);
+      assert.equal(store.getRevision(), 2);
+      assert.equal(store.getBlock(original[2].hash, 1, 10), undefined);
+      const tx = store.getTransaction(hash(4))!;
+      assert.equal(tx.blockHash, replacement.hash);
+      assert.equal(tx.height, height);
+      assert.equal(tx.time, 1800000000);
+      assert.equal(tx.wtxid, redemption.hash);
+      assert.deepEqual(tx.inputs[0].witness, ['dd', 'ee', 'ff']);
+      assert.equal(tx.inputs[0].domain, 'example.com');
+      assert.equal(store.getTransaction(hash(2))!.outputs[1].spent!.txid, tx.txid);
+      const containingBlock = store.getBlock(replacement.hash, 1, 10)!;
+      assert.deepEqual(
+        containingBlock.transactions.items.map((item) => item.txid),
+        [tx.txid],
+      );
+      assert.equal(containingBlock.transactions.items[0].height, height);
+      const domain = store.account('domain', 'example.com', 1, 10);
+      assert.deepEqual(
+        domain.transactions.items.map((item) => item.txid),
+        [hash(4), hash(2)],
+      );
+      assert.equal(domain.transactions.items[0].height, height);
+      assert.equal(domain.transactions.items[0].time, 1800000000);
+      assert.equal(store.bounties(1, 10, { state: 'spent' }).items[0].spent!.txid, tx.txid);
+    } finally {
+      store.close();
+    }
+  });
+}
 
 test('failed batch leaves the old complete index intact and a retry applies the reorg', async () => {
   const store = new IndexStore(':memory:', 'testnet4');
@@ -187,11 +288,13 @@ test('failed batch leaves the old complete index intact and a retry applies the 
     rpc.blocks = [original[0], fork1, fork2];
     rpc.failBlock = fork2.hash;
     await assert.rejects(store.sync(rpc), /RPC unavailable/);
+    assert.equal(store.getRevision(), 1);
     assert.equal(store.getTip()!.hash, original[2].hash);
     assert.ok(store.getTransaction(hash(4)));
     assert.equal(store.getTransaction(hash(6)), undefined);
     rpc.failBlock = undefined;
     await store.sync(rpc);
+    assert.equal(store.getRevision(), 2);
     assert.equal(store.getTip()!.hash, fork2.hash);
     assert.equal(store.getTransaction(hash(4)), undefined);
   } finally {
@@ -209,10 +312,14 @@ test('a write failure rolls back both orphan deletion and the partially inserted
     const invalidFork = block(2, 202, [duplicate, duplicate], original[1]);
     rpc.blocks = [original[0], original[1], invalidFork];
     await assert.rejects(store.sync(rpc), /UNIQUE constraint/);
+    assert.equal(store.getRevision(), 1);
     assert.equal(store.getTip()!.hash, original[2].hash);
     assert.equal(store.getTransaction(hash(6)), undefined);
     assert.equal(store.getTransaction(hash(2))!.outputs[1].spent!.txid, hash(4));
     assert.equal(store.overview().transactionCount, 5);
+    rpc.blocks = original;
+    await store.sync(rpc);
+    assert.equal(store.getRevision(), 1, 'failed writes must not leave a pending revision change');
   } finally {
     store.close();
   }
@@ -280,13 +387,27 @@ test('one oversized block still advances and atomically commits a bounded reorg 
     // The following block must not be fetched once the budget has been reached.
     rpc.failBlock = fork2.hash;
     assert.deepEqual(await store.sync(rpc), { height: 1, nodeHeight: 2, indexedBlocks: 1 });
+    assert.equal(store.getRevision(), 2);
     assert.equal(store.getTip()!.hash, fork1.hash);
     assert.equal(store.getTransaction(hash(4)), undefined);
     assert.equal(store.getTransaction(hash(2)), undefined);
+    assert.equal(store.getBlock(original[1].hash, 1, 10), undefined);
+    assert.equal(store.getBlock(original[2].hash, 1, 10), undefined);
+    assert.equal(store.getBlock('2', 1, 10), undefined);
+    assert.deepEqual(
+      store.listBlocks(1, 10).items.map((item) => item.hash),
+      [fork1.hash, original[0].hash],
+    );
+    assert.deepEqual(
+      store.account('domain', 'example.com', 1, 10).transactions.items.map((item) => item.txid),
+      [hash(6)],
+    );
+    assert.equal(store.getTransaction(hash(1))!.outputs[0].spent, undefined);
     assert.equal(store.getTransaction(hash(6))!.outputs[0].domain, 'example.com');
     assert.equal(store.getBlock('1', 1, 10)!.block.nextHash, undefined);
     rpc.failBlock = undefined;
     assert.deepEqual(await store.sync(rpc), { height: 2, nodeHeight: 2, indexedBlocks: 1 });
+    assert.equal(store.getRevision(), 3);
     assert.equal(store.getTip()!.hash, fork2.hash);
   } finally {
     store.close();
