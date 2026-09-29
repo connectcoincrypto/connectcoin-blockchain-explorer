@@ -26,16 +26,24 @@ interface IndexedBlock {
 // Bound retained batch payload, not valid block size. One complete block may
 // exceed this budget; decoding also temporarily holds the current RPC response.
 const MAX_SYNC_BATCH_BYTES = 32 * 1024 * 1024;
-interface TxRow {
+interface TransactionSummaryRow {
   txid: string;
   height: number;
   time: number;
-  data: string;
   total_output: string;
   input_count: number;
   output_count: number;
   p2c_count: number;
   fee: string | null;
+}
+// Summary pages must not materialize transactions.data (including full witnesses).
+const TRANSACTION_SUMMARY_COLUMNS = `t.txid, t.height, t.time, t.total_output,
+  t.input_count, t.output_count, t.p2c_count, t.fee`;
+
+interface BlockRow {
+  height: number;
+  data: string;
+  next_hash: string | null;
 }
 
 function pagination(page: number, pageSize: number): { page: number; pageSize: number; offset: number } {
@@ -48,7 +56,7 @@ function pagination(page: number, pageSize: number): { page: number; pageSize: n
   return { page, pageSize, offset };
 }
 
-function summary(row: TxRow): TransactionSummary {
+function summary(row: TransactionSummaryRow): TransactionSummary {
   return {
     txid: row.txid,
     height: row.height,
@@ -406,11 +414,10 @@ export class IndexStore {
     return tx;
   }
 
-  private blockFromRow(row: { height: number; data: string }): BlockSummary {
+  private blockFromRow(row: BlockRow): BlockSummary {
     const block: BlockSummary = JSON.parse(row.data);
-    const next = this.db.prepare('SELECT hash FROM blocks WHERE height = ?').get(row.height + 1) as
-      { hash: string } | undefined;
-    if (next) block.nextHash = next.hash;
+    // The current-chain join wins over a nextHash saved in the RPC snapshot.
+    if (row.next_hash !== null) block.nextHash = row.next_hash;
     else delete block.nextHash;
     return block;
   }
@@ -419,8 +426,14 @@ export class IndexStore {
     const p = pagination(page, pageSize);
     const total = Number(this.db.prepare('SELECT COUNT(*) AS n FROM blocks').get()!.n);
     const rows = this.db
-      .prepare('SELECT height, data FROM blocks ORDER BY height DESC LIMIT ? OFFSET ?')
-      .all(p.pageSize, p.offset) as unknown as { height: number; data: string }[];
+      .prepare(
+        // Apply OFFSET before joining, so skipped blocks need no successor lookup.
+        `SELECT b.height, b.data, successor.hash AS next_hash
+      FROM (SELECT height, data FROM blocks ORDER BY height DESC LIMIT ? OFFSET ?) b
+      LEFT JOIN blocks successor ON successor.height = b.height + 1
+      ORDER BY b.height DESC`,
+      )
+      .all(p.pageSize, p.offset) as unknown as BlockRow[];
     return { items: rows.map((row) => this.blockFromRow(row)), total, page, pageSize };
   }
 
@@ -432,12 +445,19 @@ export class IndexStore {
     const p = pagination(page, pageSize);
     const isHeight = /^\d{1,15}$/.test(hashOrHeight);
     const row = this.db
-      .prepare(`SELECT height, data FROM blocks WHERE ${isHeight ? 'height' : 'hash'} = ?`)
-      .get(isHeight ? Number(hashOrHeight) : hashOrHeight) as { height: number; data: string } | undefined;
+      .prepare(
+        `SELECT b.height, b.data, successor.hash AS next_hash FROM blocks b
+      LEFT JOIN blocks successor ON successor.height = b.height + 1
+      WHERE b.${isHeight ? 'height' : 'hash'} = ?`,
+      )
+      .get(isHeight ? Number(hashOrHeight) : hashOrHeight) as BlockRow | undefined;
     if (!row) return undefined;
     const rows = this.db
-      .prepare('SELECT * FROM transactions WHERE height = ? ORDER BY position LIMIT ? OFFSET ?')
-      .all(row.height, p.pageSize, p.offset) as unknown as TxRow[];
+      .prepare(
+        `SELECT ${TRANSACTION_SUMMARY_COLUMNS} FROM transactions t
+      WHERE t.height = ? ORDER BY t.position LIMIT ? OFFSET ?`,
+      )
+      .all(row.height, p.pageSize, p.offset) as unknown as TransactionSummaryRow[];
     const block = this.blockFromRow(row);
     return { block, transactions: { items: rows.map(summary), total: block.txCount, page, pageSize } };
   }
@@ -446,6 +466,7 @@ export class IndexStore {
     const counts = this.db
       .prepare(
         `SELECT
+      COALESCE((SELECT MAX(height) FROM blocks), -1) AS height,
       (SELECT COUNT(*) FROM blocks) AS blocks,
       (SELECT COUNT(*) FROM transactions) AS transactions,
       (SELECT COUNT(*) FROM outputs WHERE type = 2) AS bounties`,
@@ -463,7 +484,7 @@ export class IndexStore {
       value += BigInt(String(row.value));
     }
     return {
-      height: this.getTip()?.height ?? -1,
+      height: Number(counts.height),
       blockCount: Number(counts.blocks),
       transactionCount: Number(counts.transactions),
       bountyCount: Number(counts.bounties),
@@ -498,10 +519,10 @@ export class IndexStore {
     const total = Number(this.db.prepare(`SELECT COUNT(*) AS n FROM (${matching})`).get(lookup, lookup)!.n);
     const rows = this.db
       .prepare(
-        `SELECT t.* FROM transactions t WHERE t.txid IN (${matching})
+        `SELECT ${TRANSACTION_SUMMARY_COLUMNS} FROM transactions t WHERE t.txid IN (${matching})
       ORDER BY t.height DESC, t.position DESC LIMIT ? OFFSET ?`,
       )
-      .all(lookup, lookup, p.pageSize, p.offset) as unknown as TxRow[];
+      .all(lookup, lookup, p.pageSize, p.offset) as unknown as TransactionSummaryRow[];
     return {
       query,
       kind,
