@@ -6,6 +6,8 @@ A self-hosted, read-only explorer backed by a ConnectCoin node's JSON-RPC. Nativ
 
 Requires **Node.js 24+**, npm, and a ConnectCoin node using the **September 9, 2026 P2C signature-mask chain reset** (Core commit `d4d1ae56aa`), with RPC enabled (`server=1`). Core calls this reset **P2C mask v1**: that is the output-layout revision, not the TLS proof version. Only proof version 2 is supported; proof v1 is rejected. For a complete explorer, the node must retain the full, unpruned chain. A wallet is **not** required.
 
+The Core node must also include the [P2C RSA public-exponent bound](https://github.com/connectcoincrypto/connectcoin/blob/main/doc/pay-to-connect.md#rsa-public-exponent-bound): `bit_length(e) <= 64` (`e <= 2^64 - 1`) for every RSA certificate key, including unused supplied certificates and selected trust roots, before signature verification. This limits the exponent, not the RSA modulus size. It tightens consensus without changing the genesis, proof version 2 or root-bundle version 1, so the explorer's chain/genesis checks cannot detect an outdated validator. Update Core separately; the explorer decodes certificates for display and does not independently enforce this bound or verify their signatures.
+
 ```sh
 npm ci
 npm run build
