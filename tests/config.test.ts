@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { readConfig } from '../src/server/config.js';
 import { outputLabel } from '../src/shared/types.js';
 import { NETWORKS } from '../src/shared/networks.js';
+import { MAINNET_GENESIS } from './fixtures/mainnet-genesis.js';
 
 test('output labels preserve numeric protocol types and exact requested names', () => {
   assert.equal(outputLabel(1), 'output type: 1 (pay-to-public-key)');
@@ -48,11 +49,53 @@ test('each supported network gets its Core chain name, RPC port and distinct ind
   }
   assert.equal(readConfig(['--regtest'], {}).network, 'regtest');
   assert.equal(readConfig([], {}).network, 'testnet4');
-  assert.equal(readConfig(['--network', 'main'], {}).expectedGenesis, undefined);
+  assert.equal(readConfig(['--network', 'main'], {}).expectedGenesis, MAINNET_GENESIS.hash);
+});
+
+test('mainnet selects its own RPC, root cookie and genesis-isolated index without changing the default', () => {
+  const config = readConfig(['--network', 'main', '--datadir', 'node-data'], {});
+  assert.equal(config.network, 'main');
+  assert.equal(config.expectedChain, 'main');
+  assert.equal(config.expectedGenesis, MAINNET_GENESIS.hash);
+  assert.equal(config.title, 'ConnectCoin Explorer');
+  assert.equal(config.rpcUrl, 'http://127.0.0.1:48172');
+  assert.equal(config.cookieFile, resolve('node-data', '.cookie'));
+  assert.equal(config.database, resolve('data', 'main-30a3a7543f593b63.sqlite'));
+  assert.notEqual(config.database, resolve('data', 'main-unlaunched.sqlite'));
+  const testnet = readConfig(['--testnet', '--datadir', 'node-data'], {});
+  assert.notEqual(config.database, testnet.database);
+  assert.notEqual(config.cookieFile, testnet.cookieFile);
+  assert.notEqual(config.rpcUrl, testnet.rpcUrl);
+  assert.equal(readConfig([], {}).network, 'testnet4');
+});
+
+test('mainnet deployment can explicitly override a retained testnet environment', () => {
+  const config = readConfig(
+    [
+      '--network',
+      'main',
+      '--rpc-url',
+      'http://127.0.0.1:48172',
+      '--rpc-cookie',
+      'node-data/.cookie',
+      '--database',
+      'data/main-30a3a7543f593b63.sqlite',
+    ],
+    {
+      EXPLORER_NETWORK: 'testnet4',
+      CONNECTCOIN_RPC_URL: 'http://127.0.0.1:48178',
+      CONNECTCOIN_RPC_COOKIE: 'node-data/testnet4/.cookie',
+      EXPLORER_DATABASE: 'data/testnet4-710dc5910cbef402.sqlite',
+    },
+  );
+  assert.equal(config.network, 'main');
+  assert.equal(config.rpcUrl, 'http://127.0.0.1:48172');
+  assert.equal(config.cookieFile, resolve('node-data', '.cookie'));
+  assert.equal(config.database, resolve('data', 'main-30a3a7543f593b63.sqlite'));
 });
 
 test('default reset indexes do not reuse the old network-only file; explicit paths remain honored', () => {
-  for (const network of ['testnet3', 'testnet4', 'signet', 'regtest'] as const) {
+  for (const network of ['main', 'testnet3', 'testnet4', 'signet', 'regtest'] as const) {
     assert.notEqual(readConfig(['--network', network], {}).database, resolve('data', `${network}.sqlite`));
     assert.equal(
       readConfig(['--network', network, '--database', `data/${network}.sqlite`], {}).database,

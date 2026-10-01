@@ -22,11 +22,12 @@ export interface Config {
 export const HELP = `ConnectCoin blockchain explorer — Node.js 24+
 
   npm start -- --testnet
+  npm start -- --network main --rpc-url http://127.0.0.1:48172
   npm start -- --network regtest --rpc-url http://127.0.0.1:48184
 
 Options:
   --testnet                  Select current testnet4 (not legacy testnet3)
-  --network NETWORK          testnet4 (default), testnet3, signet, regtest, main (unlaunched)
+  --network NETWORK          testnet4 (default), testnet3, signet, regtest, main
   --regtest                  Select local regression test network
   --rpc-url URL              Node JSON-RPC URL; defaults to this network's port
   --rpc-cookie PATH          Node .cookie file (preferred authentication)
@@ -43,6 +44,8 @@ Environment: EXPLORER_NETWORK, EXPLORER_HOST, EXPLORER_PORT,
 EXPLORER_DATABASE, CONNECTCOIN_RPC_URL, CONNECTCOIN_RPC_USER,
 CONNECTCOIN_RPC_PASSWORD, CONNECTCOIN_RPC_COOKIE, CONNECTCOIN_DATADIR.
 An optional .env file in the working directory is loaded on startup.
+Mainnet uses RPC 48172 and the base data-directory cookie; testnet4 uses RPC 48178.
+Leave CONNECTCOIN_RPC_URL unset to use the selected network's default port.
 `;
 function integer(value: string, name: string, min: number, max: number): number {
   if (!/^\d+$/.test(value)) throw new Error(`${name} must be an integer.`);

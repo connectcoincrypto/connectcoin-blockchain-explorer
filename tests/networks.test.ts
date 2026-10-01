@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { NETWORKS, PROTOCOL } from '../src/shared/networks.js';
+import { MAINNET_GENESIS } from './fixtures/mainnet-genesis.js';
 
-test('P2C signature-mask reset genesis metadata hashes to the published Core block identifiers', () => {
-  for (const network of ['testnet3', 'testnet4', 'signet', 'regtest'] as const) {
+test('all genesis headers independently hash to the published Core block identifiers', () => {
+  for (const network of ['main', 'testnet3', 'testnet4', 'signet', 'regtest'] as const) {
     const params = NETWORKS[network];
     assert.equal(params.launched, true);
     const genesis = params.genesis;
@@ -19,14 +20,77 @@ test('P2C signature-mask reset genesis metadata hashes to the published Core blo
     const hash = createHash('sha256').update(first).digest().reverse().toString('hex');
     assert.equal(hash, genesis.hash, network);
     assert.equal(BigInt(genesis.rewardConnects), 10_000_000n * BigInt(PROTOCOL.connectsPerCoin));
-    assert.match(genesis.publicKey, /^[0-9a-f]{64}$/);
+    assert.equal(
+      genesis.outputs.reduce((total, output) => total + BigInt(output.valueConnects), 0n),
+      BigInt(genesis.rewardConnects),
+    );
+    for (const output of genesis.outputs) assert.match(output.publicKey, /^[0-9a-f]{64}$/);
+    if (network === 'main') {
+      assert.equal(header.toString('hex'), MAINNET_GENESIS.headerHex);
+      assert.equal(genesis.outputs.length, 2);
+      assert.equal(genesis.publicKey, undefined, 'mainnet has no single genesis allocation key');
+    } else {
+      assert.match(genesis.publicKey!, /^[0-9a-f]{64}$/);
+      assert.deepEqual(genesis.outputs, [
+        { valueConnects: genesis.rewardConnects, publicKey: genesis.publicKey },
+      ]);
+    }
   }
 });
 
-test('mainnet has no operational genesis and testnet4 uses the reset identity', () => {
-  assert.equal(NETWORKS.main.launched, false);
-  assert.equal(NETWORKS.main.genesis, null);
+test('mainnet uses its launch identity and preserves both native P2PK allocations', () => {
+  assert.equal(NETWORKS.main.launched, true);
   assert.equal(NETWORKS.main.testChain, false);
+  assert.equal(NETWORKS.main.genesis?.hash, MAINNET_GENESIS.hash);
+  assert.equal(NETWORKS.main.genesis?.merkleRoot, MAINNET_GENESIS.merkleRoot);
+  assert.equal(NETWORKS.main.genesis?.bits, MAINNET_GENESIS.bits);
+  assert.equal(NETWORKS.main.genesis?.time, MAINNET_GENESIS.time);
+  assert.equal(NETWORKS.main.genesis?.nonce, MAINNET_GENESIS.nonce);
+  assert.deepEqual(NETWORKS.main.genesis?.outputs, MAINNET_GENESIS.outputs);
+  assert.equal(NETWORKS.main.rpcPort, 48172);
+  assert.equal(NETWORKS.main.p2pPort, 48173);
+  assert.equal(NETWORKS.main.bech32Hrp, 'cc');
+  assert.equal(NETWORKS.main.defaultNetworkMagic, 'd951a5e2');
+  assert.deepEqual(NETWORKS.main.dnsSeeds, [
+    'connectcoin2.com',
+    'connectcoin3.com',
+    'connectcoin4.com',
+    'dememzea.tplinkdns.com',
+  ]);
+  assert.notEqual(NETWORKS.main.genesis?.hash, NETWORKS.testnet4.genesis?.hash);
+});
+
+test('mainnet serialized coinbase independently commits to both allocation keys and amounts', () => {
+  const coinbase = Buffer.from(MAINNET_GENESIS.coinbaseHex, 'hex');
+  const txid = createHash('sha256')
+    .update(createHash('sha256').update(coinbase).digest())
+    .digest()
+    .reverse()
+    .toString('hex');
+  assert.equal(txid, MAINNET_GENESIS.merkleRoot);
+  assert.equal(txid, NETWORKS.main.genesis?.merkleRoot);
+  assert.equal(coinbase.readUInt32LE(0), 1);
+  assert.equal(coinbase[4], 1, 'one coinbase input');
+  assert.equal(coinbase.subarray(5, 37).toString('hex'), '0'.repeat(64));
+  assert.equal(coinbase.readUInt32LE(37), 0xffffffff);
+  const scriptLength = coinbase[41];
+  assert.equal(scriptLength, 86);
+  let offset = 42 + scriptLength;
+  assert.equal(coinbase.readUInt32LE(offset), 0xffffffff);
+  offset += 4;
+  assert.equal(coinbase[offset++], 2, 'two native typed outputs, not one aggregate allocation');
+  for (const expected of NETWORKS.main.genesis!.outputs) {
+    assert.equal(coinbase.readBigUInt64LE(offset).toString(), expected.valueConnects);
+    offset += 8;
+    assert.equal(coinbase[offset++], 1, 'pay-to-public-key output type');
+    assert.equal(coinbase.subarray(offset, offset + 32).toString('hex'), expected.publicKey);
+    offset += 32;
+  }
+  assert.equal(coinbase.readUInt32LE(offset), 0);
+  assert.equal(offset + 4, coinbase.length);
+});
+
+test('testnet4 retains its reset identity after adding mainnet', () => {
   assert.equal(
     NETWORKS.testnet4.genesis?.hash,
     '710dc5910cbef40216bd82ccfb66af2273b2b1d336b034c5794966904cb603bf',

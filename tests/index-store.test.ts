@@ -522,11 +522,16 @@ test('opening an old-genesis database refuses cached reads without deleting the 
   }
 });
 
-test('mainnet cannot bind a historical or invented operational genesis', () => {
+test('mainnet binds only its real genesis and rejects zero, invented and testnet identities', () => {
   const store = new IndexStore(':memory:', 'main');
   try {
-    assert.throws(() => store.bindNetwork('main', hash(100)), /not launched/);
+    assert.throws(() => store.bindNetwork('main', hash(0)), /does not match/);
+    assert.throws(() => store.bindNetwork('main', hash(100)), /does not match/);
+    assert.throws(() => store.bindNetwork('main', NETWORKS.testnet4.genesis!.hash), /does not match/);
+    assert.throws(() => store.bindNetwork('testnet4', NETWORKS.main.genesis!.hash), /does not match/);
     assert.equal(store.getTip(), undefined);
+    assert.doesNotThrow(() => store.bindNetwork('main', NETWORKS.main.genesis!.hash));
+    assert.equal(store.getRevision(), 0, 'binding identity alone does not index a block');
   } finally {
     store.close();
   }

@@ -63,7 +63,7 @@ let metricsTime = 0;
 async function poll() {
   let delay = config.pollMs;
   try {
-    if (!config.expectedGenesis) throw new Error('MAINNET_UNLAUNCHED');
+    if (!config.expectedGenesis) throw new Error('NETWORK_UNAVAILABLE');
     const chain = await rpc.call<any>('getblockchaininfo');
     if (chain.chain !== config.expectedChain) throw new Error('NETWORK_MISMATCH');
     const genesis = await rpc.call<string>('getblockhash', [0]);
@@ -108,10 +108,10 @@ async function poll() {
       syncing: false,
       indexedHeight: store.getTip()?.height ?? -1,
       error:
-        error?.message === 'MAINNET_UNLAUNCHED'
-          ? 'Mainnet is not launched and has no operational genesis. Use --testnet for the current P2C v2 beta.'
+        error?.message === 'NETWORK_UNAVAILABLE'
+          ? 'The selected network has no configured genesis. Update the explorer network catalog.'
           : mismatch
-            ? 'The node chain or genesis does not match the current signature-mask reset (P2C proof v2). Upgrade the node to the reset chain and check --network/--datadir. Old-chain data is not imported.'
+            ? 'The node chain or genesis does not match the selected P2C proof v2 network. Update Core and check --network/--datadir. Other-chain data is not imported.'
             : /prun/i.test(error?.message ?? '')
               ? 'A full history requires an unpruned node. Restore the missing blocks before indexing.'
               : 'Node RPC is unavailable. Check the RPC URL, authentication and that the node was started with server=1.',

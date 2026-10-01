@@ -2,11 +2,13 @@
 
 A self-hosted, read-only explorer backed by a ConnectCoin node's JSON-RPC. Native typed outputs and pay-to-connect are first-class data, not inferred from compatibility `scriptPubKey.type` strings.
 
-## Run on testnet
+## Requirements
 
-Requires **Node.js 24+**, npm, and a ConnectCoin node using the **September 9, 2026 P2C signature-mask chain reset** (Core commit `d4d1ae56aa`), with RPC enabled (`server=1`). Core calls this reset **P2C mask v1**: that is the output-layout revision, not the TLS proof version. Only proof version 2 is supported; proof v1 is rejected. For a complete explorer, the node must retain the full, unpruned chain. A wallet is **not** required.
+Requires **Node.js 24+**, npm, and an up-to-date ConnectCoin node with RPC enabled (`server=1`). The catalog includes the **October 1, 2026 mainnet launch** and the **September 9, 2026 test-chain signature-mask reset**, following Core commit `88360e0e5d`. Core calls the output layout **P2C mask v1**; this is separate from the TLS proof version. Only proof version 2 is supported; proof v1 is rejected. For a complete explorer, the node must retain the full, unpruned chain. A wallet is **not** required.
 
 The Core node must also include the [P2C RSA public-exponent bound](https://github.com/connectcoincrypto/connectcoin/blob/main/doc/pay-to-connect.md#rsa-public-exponent-bound): `bit_length(e) <= 64` (`e <= 2^64 - 1`) for every RSA certificate key, including unused supplied certificates and selected trust roots, before signature verification. This limits the exponent, not the RSA modulus size. It tightens consensus without changing the genesis, proof version 2 or root-bundle version 1, so the explorer's chain/genesis checks cannot detect an outdated validator. Update Core separately; the explorer decodes certificates for display and does not independently enforce this bound or verify their signatures.
+
+## Run on testnet
 
 ```sh
 npm ci
@@ -30,7 +32,27 @@ npm start -- --testnet --rpc-url http://127.0.0.1:48178 --rpc-cookie "C:/path/to
 
 For username/password authentication, use `CONNECTCOIN_RPC_USER` and `CONNECTCOIN_RPC_PASSWORD` in the server environment or an untracked `.env`. Do not put credentials in the URL, source code, frontend, or command-line password arguments. `.env.example` documents the available variables. Cookie authentication is reread on each request, so node restarts can rotate the cookie.
 
-Run `npm start -- --help` for all options. The explorer now defaults to **testnet4**, matching the Core beta, when no network flag or environment setting is supplied. Existing explicit selections are preserved; CLI flags override environment settings.
+## Run on mainnet
+
+After installing dependencies and building as above, select mainnet explicitly:
+
+```sh
+npm start -- --network main --rpc-url http://127.0.0.1:48172 --datadir "/path/to/mainnet-node-data"
+```
+
+Mainnet uses RPC port **48172** and the `.cookie` directly in the node's base data directory, with **no network subdirectory**. On Linux, the default is `~/.connectcoin/.cookie`. To select the exact cookie instead:
+
+```sh
+npm start -- --network main --rpc-url http://127.0.0.1:48172 --rpc-cookie "/path/to/mainnet-node-data/.cookie"
+```
+
+The page and browser title are **ConnectCoin Explorer**. The default mainnet index is `data/main-30a3a7543f593b63.sqlite`; do not reuse a testnet or retired development-chain index. Keep a separate process and database for each network. These options connect to an already-running mainnet node; they do not start, reconfigure or migrate Core, wallets, or chain data.
+
+The mainnet genesis has **two type-1 pay-to-public-key outputs of 5,000,000 CONN each**, totaling **10,000,000 CONN**. The network panel shows each output's index, allocation and x-only public key. These are historical issuance amounts, **not current balances**; the coinbase outputs are subject to 100-block maturity. No test balances convert to mainnet. See Core's [public genesis commitments and allocations](https://github.com/connectcoincrypto/connectcoin/blob/88360e0e5d053e3137bb2457ca7e81c46f28cade/doc/mainnet-genesis.md).
+
+## Network selection
+
+Run `npm start -- --help` for all options. The explorer still defaults to **testnet4** when no network flag or environment setting is supplied, even though Core now defaults to mainnet. Existing explicit selections are preserved; CLI flags override environment settings. Leave `CONNECTCOIN_RPC_URL` unset to use the selected network's default port, or update any existing explicit URL when changing networks. An old testnet RPC URL in `.env` does not switch to mainnet automatically.
 
 | Selection                          | Node chain | Default RPC port | Header                       |
 | ---------------------------------- | ---------- | ---------------- | ---------------------------- |
@@ -40,7 +62,7 @@ Run `npm start -- --help` for all options. The explorer now defaults to **testne
 | `--network signet`                 | `signet`   | 48181            | ConnectCoin Signet Explorer  |
 | `--regtest` / `--network regtest`  | `regtest`  | 48184            | ConnectCoin Regtest Explorer |
 
-Mainnet is **not launched and has no operational genesis**. Its option only exposes its parameters and an unavailable-network warning; it cannot synchronize. The explorer checks both the node's chain name and the exact current genesis, even with an empty index. An old chain with the same name is rejected.
+The explorer checks both the node's chain name and the exact current genesis, even with an empty index. An old chain with the same name is rejected. Mainnet's default P2P port is **48173** and testnet4's is **48179**. Core's bootstrap seeds are `connectcoin2.com`, `connectcoin3.com`, `connectcoin4.com` and `dememzea.tplinkdns.com` for mainnet; testnet4 uses only `connectcoin1.com`. The explorer itself communicates only with its configured RPC node, not these P2P seeds.
 
 ## Updating after the P2C signature-mask reset
 
@@ -65,16 +87,16 @@ Current identities are defined together with network defaults in `src/shared/net
 | Testnet4 | `710dc5910cbef40216bd82ccfb66af2273b2b1d336b034c5794966904cb603bf` |
 | Signet   | `a694dccdc04a316a4f4fe496f311aff981392f25ea18e4b7f77d9f449b9089fc` |
 | Regtest  | `53c5145452f6957a2674ab904726afc2d7643c4a4fb9c2beab193ea983e500f0` |
-| Mainnet  | None — not launched                                                |
+| Mainnet  | `30a3a7543f593b6343873a16aeb61005dce0fe3f4169ab34039316b2a9bb373e` |
 
-The catalog follows Core commit `d4d1ae56aa` (`src/kernel/chainparams.cpp`, `src/chainparamsbase.cpp`, `src/consensus/{amount,consensus,p2c}.h`, `doc/testnet-beta.md`). Tests independently hash the four serialized genesis headers. Custom signet challenges share the default genesis but can change network magic; catalog fields are explicitly defaults, not a discovery of custom node settings.
+The catalog follows Core commit `88360e0e5d` (`src/kernel/chainparams.cpp`, `src/chainparamsbase.cpp`, `src/consensus/{amount,consensus,p2c}.h`, `doc/mainnet-genesis.md`, `doc/testnet-beta.md`). Mainnet was launched by `d170c5803f`; the four test-chain genesis identities remain those of reset `d4d1ae56aa`. Tests independently hash the serialized genesis headers. Custom signet challenges share the default genesis but can change network magic; catalog fields are explicitly defaults, not a discovery of custom node settings.
 
 ## Explorer views
 
 The header's theme selector offers **System**, **Light** and **Dark**. It follows the operating system by default, remembers an explicit choice in this browser and synchronizes that choice between open explorer tabs. The saved theme is applied before the first paint, without weakening the production script policy.
 
 - Network overview: node height, hashrate, mempool, latest blocks, index progress and confirmed-chain P2C reward totals.
-- Network parameters: expected and RPC-observed genesis, genesis transaction, public key/allocation, header details, address prefix, proof/root versions, block/proof limits, maturity, halving interval and default ports.
+- Network parameters: expected and RPC-observed genesis, genesis transaction, every output's type-1 public key/allocation and their total, header details, address prefix, proof/root versions, block/proof limits, maturity, halving interval and default ports.
 - Blocks and transactions, including confirmations, timestamps, sizes, weight, fees, inputs, outputs, previous outputs and spending transactions.
 - Search by block height, block/transaction hash, ConnectCoin address or canonical DNS domain.
 - Address history and balances; domain funding, rewards consumed by claims and available outputs.

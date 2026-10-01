@@ -693,10 +693,11 @@ function NetworkDetails({ status }: { status: ExplorerStatus }) {
     <Panel title="Network parameters · P2C v2">
       <div className="proof-content">
         <p className="muted small">
-          Current Core defaults · signature-mask reset September 9, 2026. Live chain data comes from the node.
-          {network.testChain
-            ? ' Test coins have no promised mainnet conversion.'
-            : ' Mainnet is not launched.'}
+          {status.network === 'main'
+            ? 'Current Core defaults · mainnet launch October 1, 2026.'
+            : 'Current Core defaults · test-chain signature-mask reset September 9, 2026.'}{' '}
+          Live chain data comes from the node.
+          {network.testChain && ' Test coins have no promised mainnet conversion.'}
         </p>
         <dl>
           <Field label="Expected genesis">
@@ -726,11 +727,15 @@ function NetworkDetails({ status }: { status: ExplorerStatus }) {
                 <Field label="Genesis transaction / Merkle root">
                   <HashValue value={genesis.merkleRoot} to={`/tx/${genesis.merkleRoot}`} full />
                 </Field>
-                <Field label="Genesis public key">
-                  <HashValue value={genesis.publicKey} full />
-                </Field>
+                {genesis.outputs.map((output, index) => (
+                  <Field key={index} label={`Genesis output #${index} · type 1`}>
+                    <strong className="mono">{money(output.valueConnects)}</strong>
+                    <div className="muted small">Pay-to-public-key · x-only public key</div>
+                    <HashValue value={output.publicKey} full />
+                  </Field>
+                ))}
                 <div className="field-grid">
-                  <Field label="Genesis allocation">{money(genesis.rewardConnects)}</Field>
+                  <Field label="Total genesis allocation">{money(genesis.rewardConnects)}</Field>
                   <Field label="Genesis timestamp">
                     {genesis.time} · {date(genesis.time)}
                   </Field>
@@ -757,8 +762,9 @@ function NetworkDetails({ status }: { status: ExplorerStatus }) {
             </div>
           </dl>
           <p className="muted small">
-            The genesis allocation is not a current balance. Block subsidy decreases with halvings and block
-            weight. Ports, signet magic and regtest parameters describe Core defaults, not custom node
+            Genesis allocations are historical issuance, not current balances. Coinbase outputs require
+            {` ${PROTOCOL.coinbaseMaturity} `}blocks of maturity. Block subsidy decreases with halvings and
+            block weight. Ports, signet magic and regtest parameters describe Core defaults, not custom node
             settings.
           </p>
         </details>

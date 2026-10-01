@@ -148,7 +148,7 @@ export class IndexStore {
   bindNetwork(chain: string, genesis: string): void {
     if (!chain || !genesis) throw new Error('RPC did not identify its chain and genesis block.');
     const expected = NETWORKS[this.network];
-    if (!expected.genesis) throw new Error('Mainnet has no operational genesis and is not launched.');
+    if (!expected.genesis) throw new Error('The selected network has no configured genesis.');
     if (chain !== expected.chain || genesis !== expected.genesis.hash) {
       throw new Error(
         'RPC chain or genesis does not match the current P2C v2 network (signature-mask reset). Upgrade the node to the matching chain.',

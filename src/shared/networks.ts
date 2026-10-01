@@ -1,6 +1,7 @@
 import type { Network } from './types.js';
 
-// Consensus defaults from ConnectCoin Core's P2C mask v1 reset (2026-09-09, d4d1ae56aa):
+// Consensus defaults from ConnectCoin Core 88360e0e5d (mainnet launch 2026-10-01;
+// test chains retain the P2C mask v1 reset of 2026-09-09):
 // src/kernel/chainparams.cpp, src/chainparamsbase.cpp, src/consensus/{amount,consensus,p2c}.h.
 // The required output signature mask is layout v1; TLS proofs remain version 2 only.
 // Runtime chain height, difficulty, peer counts and balances must still come from RPC.
@@ -26,6 +27,11 @@ export const PROTOCOL = {
   coinbaseMaturity: 100,
 } as const;
 
+export interface GenesisAllocation {
+  readonly valueConnects: string;
+  readonly publicKey: string;
+}
+
 export interface GenesisParameters {
   readonly hash: string;
   readonly merkleRoot: string;
@@ -34,7 +40,9 @@ export interface GenesisParameters {
   readonly nonce: number;
   readonly bits: string;
   readonly rewardConnects: string;
-  readonly publicKey: string;
+  // Legacy single-output field; absent for the two-output mainnet genesis.
+  readonly publicKey?: string;
+  readonly outputs: readonly GenesisAllocation[];
 }
 
 export interface NetworkParameters {
@@ -77,6 +85,15 @@ const genesisDefaults = {
   publicKey: 'da12a44d69673e42ba95ac1d2bd4e5c76c3709a1765edbc5f52b8e5e643b0609',
 } as const;
 
+function singleOutputGenesis(
+  parameters: Omit<GenesisParameters, 'outputs'> & { readonly publicKey: string },
+): GenesisParameters {
+  return {
+    ...parameters,
+    outputs: [{ valueConnects: parameters.rewardConnects, publicKey: parameters.publicKey }],
+  };
+}
+
 export const NETWORKS: Readonly<Record<Network, NetworkParameters>> = {
   main: {
     ...publicTestDefaults,
@@ -87,10 +104,28 @@ export const NETWORKS: Readonly<Record<Network, NetworkParameters>> = {
     directory: '',
     bech32Hrp: 'cc',
     testChain: false,
-    launched: false,
-    // A zero hash in Core's utility output means no operational genesis, not block zero.
-    genesis: null,
+    launched: true,
+    genesis: {
+      version: 1,
+      hash: '30a3a7543f593b6343873a16aeb61005dce0fe3f4169ab34039316b2a9bb373e',
+      merkleRoot: '2ff1604a1a6ed04110972a78c808d7b967f8f3d6ee754fcf33bded563edc2c8c',
+      time: 1790872995,
+      nonce: 215364,
+      bits: '1e333300',
+      rewardConnects: '100000000000000000',
+      outputs: [
+        {
+          valueConnects: '50000000000000000',
+          publicKey: '29a6b41260ed25e3019d18236192afecec9ea0b7312837bacf81a3c40d7b2034',
+        },
+        {
+          valueConnects: '50000000000000000',
+          publicKey: '2c83a568529b55cc93e2d20754f079f6072d77ac88266d9b054cb3e0e92a7845',
+        },
+      ],
+    },
     defaultNetworkMagic: 'd951a5e2',
+    dnsSeeds: ['connectcoin2.com', 'connectcoin3.com', 'connectcoin4.com', 'dememzea.tplinkdns.com'],
   },
   testnet3: {
     ...publicTestDefaults,
@@ -98,13 +133,13 @@ export const NETWORKS: Readonly<Record<Network, NetworkParameters>> = {
     rpcPort: 48175,
     p2pPort: 48176,
     directory: 'testnet3',
-    genesis: {
+    genesis: singleOutputGenesis({
       ...genesisDefaults,
       hash: '1025889d725c5d64c3ee38ab07d2de279ab57036a2482186c65806d6c0291787',
       merkleRoot: '2e2e1a9fdad577fc8832a2e582f0149de3ab2032764a978c7e469b18f1c4099e',
       time: 1788912000,
       nonce: 66621,
-    },
+    }),
     defaultNetworkMagic: 'c7291ff5',
   },
   testnet4: {
@@ -113,16 +148,16 @@ export const NETWORKS: Readonly<Record<Network, NetworkParameters>> = {
     rpcPort: 48178,
     p2pPort: 48179,
     directory: 'testnet4',
-    genesis: {
+    genesis: singleOutputGenesis({
       ...genesisDefaults,
       hash: '710dc5910cbef40216bd82ccfb66af2273b2b1d336b034c5794966904cb603bf',
       merkleRoot: 'e09a12d2aca740a06be984897fa268d4f03317c2363748d4ab69768ed92ca555',
       publicKey: '2ef316afd6177619f68ecfc6521fc3fcbf7faa2b25273f6ddea7971fae0de144',
       time: 1788912001,
       nonce: 913,
-    },
+    }),
     defaultNetworkMagic: '77d66cbc',
-    dnsSeeds: ['connectcoin1.com', 'connectcoin2.com', 'connectcoin3.com', 'dememzea.tplinkdns.com'],
+    dnsSeeds: ['connectcoin1.com'],
   },
   signet: {
     ...publicTestDefaults,
@@ -131,13 +166,13 @@ export const NETWORKS: Readonly<Record<Network, NetworkParameters>> = {
     rpcPort: 48181,
     p2pPort: 48182,
     directory: 'signet',
-    genesis: {
+    genesis: singleOutputGenesis({
       ...genesisDefaults,
       hash: 'a694dccdc04a316a4f4fe496f311aff981392f25ea18e4b7f77d9f449b9089fc',
       merkleRoot: 'e9b9c33924f02701bc84751dc4701a1eef9b5c865fdc030b34843ed45db74dbf',
       time: 1788912002,
       nonce: 2069,
-    },
+    }),
     defaultNetworkMagic: '304c2f0c',
   },
   regtest: {
@@ -148,7 +183,7 @@ export const NETWORKS: Readonly<Record<Network, NetworkParameters>> = {
     p2pPort: 48185,
     directory: 'regtest',
     bech32Hrp: 'ccrt',
-    genesis: {
+    genesis: singleOutputGenesis({
       ...genesisDefaults,
       hash: '53c5145452f6957a2674ab904726afc2d7643c4a4fb9c2beab193ea983e500f0',
       merkleRoot: '9fee3081f6d76758b63691d412ce44408c471b02d0e5ae443aa5adf3a7345c9e',
@@ -156,7 +191,7 @@ export const NETWORKS: Readonly<Record<Network, NetworkParameters>> = {
       time: 1296688602,
       nonce: 20,
       bits: '207fffff',
-    },
+    }),
     targetSpacingSeconds: 600,
     subsidyHalvingInterval: 150,
     difficultyRetargetInterval: 144,
