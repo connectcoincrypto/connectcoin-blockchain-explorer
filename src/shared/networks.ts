@@ -13,7 +13,7 @@ export const PROTOCOL = {
   maxP2CCertificates: 8,
   maxP2CCertificateBytes: 16 * 1024,
   powAlgorithm: 'randomx-v2',
-  ticker: 'CC',
+  ticker: 'CONN',
   atomicUnit: 'connect',
   decimals: 10,
   connectsPerCoin: '10000000000',

@@ -107,7 +107,7 @@ The explorer API exposes the value as `TxOutput.signatureAlgorithmsMask` and car
 
 ## Correctness and data scope
 
-**Amounts:** 1 CC = 10^10 connects. RPC numeric literals are parsed without floating-point rounding. Amounts travel through the index and API as integer decimal strings in **connects**, and the UI formats them with `BigInt` into CC. Approximate hashrates and statistical attempt counts are not monetary values.
+**Amounts:** 1 CONN = 10^10 connects. RPC numeric literals are parsed without floating-point rounding. Amounts travel through the index and API as integer decimal strings in **connects**, and the UI formats them with `BigInt` into CONN. The ticker comes from `PROTOCOL.ticker`, shared by the UI and network API. Approximate hashrates and statistical attempt counts are not monetary values.
 
 **Index:** SQLite is stored in a genesis-specific file under `data/` by default (see upgrade instructions). Backfill uses `getblock(hash, 2)` from genesis, then follows the tip. This supplies address/domain history without a node `txindex` or `txospenderindex`. Confirmed spends are tracked locally. Reorganizations, shorter tips and partial sync failures are handled atomically. Restarting resumes from the stored tip. Sync uses bounded block batches, including a retained-payload estimate budget; a complete large block still needs enough server memory to decode.
 

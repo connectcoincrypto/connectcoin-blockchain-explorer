@@ -46,6 +46,7 @@ import type {
 import { outputLabel } from '../shared/types';
 import { outputPath } from '../shared/links';
 import { NETWORKS, PROTOCOL } from '../shared/networks';
+import { formatMoney as money } from '../shared/money';
 import type { DecodedP2CProof } from '../server/proof';
 import { ThemePicker } from './ThemePicker';
 import { P2CSignatureAlgorithms } from './P2CSignatureAlgorithms';
@@ -98,18 +99,6 @@ function useApi<T>(url: string, interval = 0) {
 const StatusContext = createContext<ExplorerStatus | undefined>(undefined);
 const short = (s?: string, length = 10) => (s ? `${s.slice(0, length)}…${s.slice(-6)}` : '—');
 const number = (n?: number) => (n === undefined ? '—' : n.toLocaleString('en-US'));
-function money(value?: string, unit = true) {
-  if (value === undefined) return '—';
-  try {
-    const n = BigInt(value),
-      negative = n < 0n,
-      a = negative ? -n : n;
-    const fraction = (a % 10_000_000_000n).toString().padStart(10, '0').replace(/0+$/, '');
-    return `${negative ? '-' : ''}${(a / 10_000_000_000n).toLocaleString('en-US')}${fraction ? `.${fraction}` : ''}${unit ? ' CC' : ''}`;
-  } catch {
-    return '—';
-  }
-}
 const date = (time?: number) =>
   time === undefined
     ? '—'
@@ -401,7 +390,7 @@ function Layout() {
           </span>
           <span>
             {status?.network !== 'main' ? 'Test network · test coins have no mainnet balance' : 'Mainnet'}{' '}
-            <span className="footer-dot">·</span> 1 CC = 10¹⁰ connects
+            <span className="footer-dot">·</span> 1 {PROTOCOL.ticker} = 10¹⁰ connects
           </span>
         </footer>
       </div>
@@ -752,7 +741,9 @@ function NetworkDetails({ status }: { status: ExplorerStatus }) {
             )}
             <div className="field-grid">
               <Field label="Base initial subsidy">{money(PROTOCOL.initialBlockSubsidyConnects)}</Field>
-              <Field label="Atomic units per CC">{number(Number(PROTOCOL.connectsPerCoin))} connects</Field>
+              <Field label={`Atomic units per ${PROTOCOL.ticker}`}>
+                {number(Number(PROTOCOL.connectsPerCoin))} connects
+              </Field>
               <Field label="Maximum proof size">{PROTOCOL.maxP2CProofBytes / 1024} KiB</Field>
               <Field label="Maximum certificates">{PROTOCOL.maxP2CCertificates}</Field>
               <Field label="Default P2P port">{network.p2pPort}</Field>

@@ -1,6 +1,6 @@
 import { bech32m } from 'bech32';
 import type { BlockSummary, Network, Transaction, TxInput, TxOutput } from '../shared/types.js';
-import { NETWORKS } from '../shared/networks.js';
+import { NETWORKS, PROTOCOL } from '../shared/networks.js';
 import { isValidP2CSignatureMask } from '../shared/p2c-signatures.js';
 
 export function safeInteger(value: unknown, field = 'integer'): number {
@@ -12,17 +12,19 @@ export function safeInteger(value: unknown, field = 'integer'): number {
   return number;
 }
 
-/** Convert decimal CC to integer connects without routing its digits through Number. */
+/** Convert decimal CONN to integer connects without routing its digits through Number. */
 export function decimalToAtomic(value: unknown): string {
-  if (typeof value !== 'string' && typeof value !== 'number') throw new Error('Invalid CC amount.');
-  if (typeof value === 'number' && !Number.isFinite(value)) throw new Error('Invalid CC amount.');
+  if (typeof value !== 'string' && typeof value !== 'number')
+    throw new Error(`Invalid ${PROTOCOL.ticker} amount.`);
+  if (typeof value === 'number' && !Number.isFinite(value))
+    throw new Error(`Invalid ${PROTOCOL.ticker} amount.`);
   const text = String(value);
   const match = /^([+-]?)(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(text);
-  if (!match || text.length > 1024) throw new Error('Invalid CC amount.');
+  if (!match || text.length > 1024) throw new Error(`Invalid ${PROTOCOL.ticker} amount.`);
   const fraction = match[3] ?? '';
   const exponent = Number(match[4] ?? 0);
   if (!Number.isSafeInteger(exponent) || Math.abs(exponent) > 1024)
-    throw new Error('Invalid CC amount exponent.');
+    throw new Error(`Invalid ${PROTOCOL.ticker} amount exponent.`);
   const digits = BigInt(match[2] + fraction);
   const shift = 10 + exponent - fraction.length;
   let atomic: bigint;
@@ -30,7 +32,8 @@ export function decimalToAtomic(value: unknown): string {
     atomic = digits * 10n ** BigInt(shift);
   } else {
     const divisor = 10n ** BigInt(-shift);
-    if (digits % divisor !== 0n) throw new Error('A CC amount has more than 10 decimal places.');
+    if (digits % divisor !== 0n)
+      throw new Error(`A ${PROTOCOL.ticker} amount has more than 10 decimal places.`);
     atomic = digits / divisor;
   }
   return (match[1] === '-' ? -atomic : atomic).toString();

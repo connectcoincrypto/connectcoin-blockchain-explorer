@@ -287,6 +287,7 @@ test('HTTP network metadata describes the current genesis and v2 protocol withou
   const network = await api.get('/api/network');
   assert.deepEqual(network.parameters, NETWORKS.testnet4);
   assert.deepEqual(network.protocol, PROTOCOL);
+  assert.equal(network.protocol.ticker, 'CONN');
   assert.equal(network.observedGenesis, null);
   api.status.genesis = NETWORKS.testnet4.genesis!.hash;
   assert.equal((await api.get('/api/network')).observedGenesis, NETWORKS.testnet4.genesis!.hash);

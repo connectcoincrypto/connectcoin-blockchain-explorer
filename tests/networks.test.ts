@@ -80,6 +80,7 @@ test('protocol metadata preserves exact money and distinguishes proof version fr
   assert.equal(PROTOCOL.p2cProofVersion, 2);
   assert.equal(PROTOCOL.p2cRootCertificatesVersion, 1);
   assert.equal(PROTOCOL.powAlgorithm, 'randomx-v2');
+  assert.equal(PROTOCOL.ticker, 'CONN');
   assert.equal(PROTOCOL.decimals, 10);
   assert.equal(BigInt(PROTOCOL.connectsPerCoin), 10n ** BigInt(PROTOCOL.decimals));
   assert.equal(BigInt(PROTOCOL.initialBlockSubsidyConnects), 15n * BigInt(PROTOCOL.connectsPerCoin));
